@@ -14,18 +14,18 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
 
 from src.core import ModelRegistry
 from src.core.exceptions import AnimationError
+
 from .frame_composer import FrameComposer
 from .live_portrait import LivePortraitWrapper
 from .motion_designer import MotionDesigner
-from .toon_crafter import ToonCrafterWrapper
 from .schemas import AnimationRequest, AnimationResult, KeyFrame
+from .toon_crafter import ToonCrafterWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +50,10 @@ class MemeAnimator:
 
     def __init__(
         self,
-        live_portrait_path: Optional[Path] = None,
-        toon_crafter_path: Optional[Path] = None,
+        live_portrait_path: Path | None = None,
+        toon_crafter_path: Path | None = None,
         output_dir: Path = Path("outputs/animations"),
-        registry: Optional[ModelRegistry] = None,
+        registry: ModelRegistry | None = None,
     ) -> None:
         self._output_dir = output_dir
         self._motion_designer = MotionDesigner()
@@ -112,7 +112,6 @@ class MemeAnimator:
         # 4. Optional ToonCrafter inter-frame smoothing.
         # LivePortrait produces one frame per SquashParams step; ToonCrafter fills
         # the gaps between consecutive keyframes for smoother cartoon motion.
-        toon_crafter_used = False
         if request.use_toon_crafter and len(rendered_frames) >= 2:
             logger.info(
                 "ToonCrafter smoothing: %d keyframes -> %d frames_between",
@@ -124,7 +123,6 @@ class MemeAnimator:
                     rendered_frames,
                     frames_between=request.frames_between,
                 )
-                toon_crafter_used = not self._toon_crafter._use_fallback
                 logger.info("ToonCrafter smoothing done: %d total frames", len(rendered_frames))
             except Exception as exc:
                 logger.warning("ToonCrafter smoothing failed (%s) — using unsmoothed frames.", exc)
@@ -181,8 +179,8 @@ class MemeAnimator:
     def from_config(
         cls,
         config_path: str | Path = "configs/meme_animation.yaml",
-        registry: Optional[ModelRegistry] = None,
-    ) -> "MemeAnimator":
+        registry: ModelRegistry | None = None,
+    ) -> MemeAnimator:
         from src.core import load_config
         cfg = load_config(config_path)
         lp_path_str = cfg.get("live_portrait", {}).get("model_path")

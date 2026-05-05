@@ -9,17 +9,17 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
 
 from src.core import ModelRegistry
 from src.core.exceptions import VectorizationError
+
 from .bezier_fitter import BezierFitter
+from .schemas import VectorizationRequest, VectorizationResult
 from .segmentor import Segmentor
 from .svg_builder import SVGBuilder
-from .schemas import VectorizationRequest, VectorizationResult
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ class SVGVectorizer:
 
     def __init__(
         self,
-        sam_checkpoint: Optional[Path] = None,
+        sam_checkpoint: Path | None = None,
         output_dir: Path = Path("outputs/svgs"),
-        registry: Optional[ModelRegistry] = None,
+        registry: ModelRegistry | None = None,
     ) -> None:
         self._output_dir = output_dir
         self._segmentor = Segmentor(
@@ -81,7 +81,7 @@ class SVGVectorizer:
         return VectorizationResult(
             output_path=output_path,
             layer_count=len(layers),
-            total_paths=sum(l.path_count for l in layers),
+            total_paths=sum(layer.path_count for layer in layers),
             layers=layers,
             backend_used=(
                 "contour_fallback"
@@ -96,8 +96,8 @@ class SVGVectorizer:
     def from_config(
         cls,
         config_path: str | Path = "configs/svg_vectorizer.yaml",
-        registry: Optional[ModelRegistry] = None,
-    ) -> "SVGVectorizer":
+        registry: ModelRegistry | None = None,
+    ) -> SVGVectorizer:
         from src.core import load_config
         cfg = load_config(config_path)
         checkpoint = cfg.get("sam", {}).get("checkpoint")

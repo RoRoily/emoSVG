@@ -107,29 +107,6 @@ async def status() -> dict:
         vram_info = {"available": False}
 
     return {"models": models, "vram": vram_info}
-async def status() -> dict:
-    """Return ModelRegistry state and current VRAM usage."""
-    from src.core import ModelRegistry
-    reg = ModelRegistry.instance()
-    models = reg.status()
-
-    vram_info: dict = {}
-    try:
-        import torch
-        if torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated() / 1024 ** 3
-            reserved  = torch.cuda.memory_reserved()  / 1024 ** 3
-            total     = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-            vram_info = {
-                "total_gb":     round(total, 2),
-                "allocated_gb": round(allocated, 2),
-                "reserved_gb":  round(reserved, 2),
-                "free_gb":      round(total - reserved, 2),
-            }
-    except Exception:
-        vram_info = {"available": False}
-
-    return {"models": models, "vram": vram_info}
 
 
 # ── Dev server entry point ────────────────────────────────────────────────

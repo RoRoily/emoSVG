@@ -26,16 +26,19 @@ GPU or model downloads.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
 from src.core import ModelRegistry
 from src.core.exceptions import AnimationError
+
 from .schemas import MemeExpression, SquashParams
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +209,8 @@ class LivePortraitWrapper:
 
     def __init__(
         self,
-        model_path: Optional[Path] = None,
-        registry: Optional[ModelRegistry] = None,
+        model_path: Path | None = None,
+        registry: ModelRegistry | None = None,
     ) -> None:
         self._registry = registry or ModelRegistry.instance()
         self._model_path = Path(model_path) if model_path else None
@@ -228,7 +231,7 @@ class LivePortraitWrapper:
         self,
         source_bgr: np.ndarray,
         params: SquashParams,
-        ip_image_embeds: Optional["np.ndarray"] = None,
+        ip_image_embeds: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Render a single frame by applying SquashParams deformation to source_bgr.
@@ -259,7 +262,7 @@ class LivePortraitWrapper:
         self,
         source_bgr: np.ndarray,
         param_sequence: list[SquashParams],
-        ip_image_embeds: Optional["np.ndarray"] = None,
+        ip_image_embeds: np.ndarray | None = None,
     ) -> list[np.ndarray]:
         """
         Render a full frame sequence, keeping the model on GPU for the entire
@@ -316,8 +319,8 @@ class LivePortraitWrapper:
 
         def _loader():
             try:
+                from liveportrait.config.inference_config import InferenceConfig  # type: ignore
                 from liveportrait.live_portrait_pipeline import LivePortraitPipeline  # type: ignore
-                from liveportrait.config.inference_config import InferenceConfig      # type: ignore
             except ImportError as exc:
                 raise AnimationError(
                     "liveportrait package not installed.\n"
@@ -359,7 +362,7 @@ class LivePortraitWrapper:
         pipeline,
         source_bgr: np.ndarray,
         params: SquashParams,
-        ip_image_embeds: Optional[np.ndarray] = None,
+        ip_image_embeds: np.ndarray | None = None,
     ) -> np.ndarray:
         """Single-frame inference (used by render_frame)."""
         source_tensor = self._preprocess_source(source_bgr, pipeline)
@@ -368,7 +371,7 @@ class LivePortraitWrapper:
         return self._infer_with_kp(pipeline, source_tensor, kp_source, params, ip_tensor=ip_tensor)
 
     @staticmethod
-    def _preprocess_source(source_bgr: np.ndarray, pipeline) -> "torch.Tensor":
+    def _preprocess_source(source_bgr: np.ndarray, pipeline) -> torch.Tensor:
         """
         Convert BGR uint8 → float32 RGB tensor normalised to [-1, 1],
         shape (1, 3, H, W), on the same device as the pipeline.
@@ -387,7 +390,7 @@ class LivePortraitWrapper:
         return tensor
 
     @staticmethod
-    def _extract_source_kp(pipeline, source_tensor: "torch.Tensor") -> dict:
+    def _extract_source_kp(pipeline, source_tensor: torch.Tensor) -> dict:
         """
         Extract keypoint info from the source image.
         Returns a dict with keys: pitch, yaw, roll, t, exp, scale, kp.
@@ -420,8 +423,9 @@ class LivePortraitWrapper:
         2. Add the exp_delta computed from SquashParams.
         3. Optionally scale and tilt the head.
         """
-        import torch
         import copy
+
+        import torch
 
         x_d_info = copy.deepcopy(kp_source)
 
@@ -492,9 +496,9 @@ class LivePortraitWrapper:
 
     @staticmethod
     def _prepare_ip_embeds(
-        ip_image_embeds: Optional[np.ndarray],
+        ip_image_embeds: np.ndarray | None,
         pipeline,
-    ) -> Optional["torch.Tensor"]:
+    ) -> torch.Tensor | None:
         """
         Convert a numpy IP embedding to a torch tensor on the pipeline's device.
         Returns None if ip_image_embeds is None.
@@ -519,10 +523,10 @@ class LivePortraitWrapper:
     def _infer_with_kp(
         self,
         pipeline,
-        source_tensor: "torch.Tensor",
+        source_tensor: torch.Tensor,
         kp_source: dict,
         params: SquashParams,
-        ip_tensor: Optional["torch.Tensor"] = None,
+        ip_tensor: torch.Tensor | None = None,
     ) -> np.ndarray:
         """
         Run the warp + generate step given pre-extracted source keypoints.
@@ -570,7 +574,7 @@ class LivePortraitWrapper:
         return self._tensor_to_bgr(out_rgb)
 
     @staticmethod
-    def _tensor_to_bgr(tensor: "torch.Tensor") -> np.ndarray:
+    def _tensor_to_bgr(tensor: torch.Tensor) -> np.ndarray:
         """Convert (1, 3, H, W) float tensor → HxWx3 uint8 BGR."""
         import torch
         t = tensor.squeeze(0).permute(1, 2, 0).cpu().float()
