@@ -1,17 +1,17 @@
 """POST /vectorize — SVG vectorization endpoint."""
 from __future__ import annotations
 
-import os, shutil, tempfile
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from src.api.dependencies import get_pipeline
 from src.core.exceptions import EmoSVGError
-from src.modules.svg_vectorizer.vectorizer import SVGVectorizer
 from src.modules.svg_vectorizer.schemas import VectorizationRequest
+from src.modules.svg_vectorizer.vectorizer import SVGVectorizer
 
 router = APIRouter(prefix="/vectorize", tags=["vectorize"])
 

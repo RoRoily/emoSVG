@@ -8,7 +8,9 @@ sequence that describes the full animation arc:
 No model inference here — pure math / interpolation.
 """
 from __future__ import annotations
+
 import math
+
 from .schemas import MemeExpression, SquashParams
 
 # ── Expression presets ────────────────────────────────────────────────────

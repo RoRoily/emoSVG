@@ -16,12 +16,12 @@ import logging
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable, Generator, Optional
+from typing import Any
 
-import torch
 import torch.nn as nn
 
 from .device_manager import DeviceConfig, DeviceManager
@@ -43,7 +43,7 @@ class ModelEntry:
     loader: Callable[[], nn.Module]   # zero-arg factory that returns the model
     estimated_vram_gb: float          # rough upper bound for can_fit() checks
     state: ModelState = ModelState.UNLOADED
-    module: Optional[nn.Module] = None
+    module: nn.Module | None = None
     last_used_ts: float = field(default_factory=time.monotonic)
 
     def touch(self) -> None:
@@ -65,7 +65,7 @@ class ModelRegistry:
         output = model(input_tensor)
     """
 
-    _instance: Optional["ModelRegistry"] = None
+    _instance: ModelRegistry | None = None
     _init_lock: threading.Lock = threading.Lock()
 
     def __init__(self, device_manager: DeviceManager) -> None:
@@ -78,8 +78,8 @@ class ModelRegistry:
     @classmethod
     def instance(
         cls,
-        device_config: Optional[DeviceConfig] = None,
-    ) -> "ModelRegistry":
+        device_config: DeviceConfig | None = None,
+    ) -> ModelRegistry:
         """
         Return (or create) the process-wide singleton.
 

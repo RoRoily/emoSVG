@@ -1,5 +1,6 @@
 """Abstract base class for all emoSVG pipelines."""
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -16,5 +17,5 @@ class BasePipeline(ABC):
 
     @classmethod
     @abstractmethod
-    def from_config(cls, config_path: str = "configs/base.yaml") -> "BasePipeline":
+    def from_config(cls, config_path: str = "configs/base.yaml") -> BasePipeline:
         """Construct the pipeline from a YAML config file."""

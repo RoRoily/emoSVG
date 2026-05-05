@@ -1,9 +1,9 @@
 """Data contracts for the meme_animator module."""
 from __future__ import annotations
+
 from enum import Enum
 from pathlib import Path
-from typing import Optional
-import numpy as np
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -34,18 +34,18 @@ class SquashParams(BaseModel):
 class AnimationRequest(BaseModel):
     source_image_path: Path
     expression: MemeExpression = MemeExpression.SHOCK
-    custom_params: Optional[SquashParams] = None
+    custom_params: SquashParams | None = None
     output_format: str = Field("gif", pattern="^(gif|mp4|webp)$")
     fps: int = Field(24, ge=8, le=60)
     resolution: tuple[int, int] = (512, 512)
-    seed: Optional[int] = None
+    seed: int | None = None
     # ToonCrafter inter-frame smoothing (applied after LivePortrait rendering)
     use_toon_crafter: bool = False
     frames_between: int = Field(4, ge=1, le=16)
     # IP-Adapter character consistency embedding (from IPExtractor).
     # When provided, LivePortrait uses it to condition appearance features
     # so the character identity is preserved across deformation frames.
-    ip_image_embeds: Optional[object] = None  # np.ndarray (1, D) or None
+    ip_image_embeds: object | None = None  # np.ndarray (1, D) or None
 
     model_config = {"arbitrary_types_allowed": True}
 

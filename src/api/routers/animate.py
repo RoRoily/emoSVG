@@ -1,11 +1,12 @@
 """POST /animate — animation-only endpoint."""
 from __future__ import annotations
 
-import os, shutil, tempfile
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from src.api.dependencies import get_pipeline

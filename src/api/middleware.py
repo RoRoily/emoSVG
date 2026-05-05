@@ -11,8 +11,6 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.core.exceptions import EmoSVGError
-
 logger = logging.getLogger(__name__)
 
 

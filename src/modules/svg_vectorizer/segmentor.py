@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -40,9 +39,9 @@ class Segmentor:
 
     def __init__(
         self,
-        sam_checkpoint: Optional[Path] = None,
+        sam_checkpoint: Path | None = None,
         model_type: str = "vit_h",
-        registry: Optional[ModelRegistry] = None,
+        registry: ModelRegistry | None = None,
     ) -> None:
         self._checkpoint = Path(sam_checkpoint) if sam_checkpoint else None
         self._model_type = model_type
@@ -97,7 +96,10 @@ class Segmentor:
 
         def _loader():
             try:
-                from segment_anything import sam_model_registry, SamAutomaticMaskGenerator  # type: ignore
+                from segment_anything import (  # type: ignore
+                    SamAutomaticMaskGenerator,
+                    sam_model_registry,
+                )
                 sam = sam_model_registry[model_type](checkpoint=checkpoint)
                 return SamAutomaticMaskGenerator(
                     sam,

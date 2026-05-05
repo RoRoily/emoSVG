@@ -20,7 +20,7 @@ class MeshExporter:
 
     def export(
         self,
-        mesh: "trimesh_type.Trimesh",
+        mesh: trimesh_type.Trimesh,
         output_dir: Path,
         stem: str,
         formats: list[ExportFormat],

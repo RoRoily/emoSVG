@@ -1,13 +1,14 @@
 """POST /reconstruct — 3D reconstruction endpoint."""
 from __future__ import annotations
 
-import os, shutil, tempfile
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from src.api.dependencies import get_pipeline
 from src.core.exceptions import EmoSVGError
 from src.modules.reconstructor_3d.reconstructor import Reconstructor3D
 from src.modules.reconstructor_3d.schemas import ReconstructionRequest

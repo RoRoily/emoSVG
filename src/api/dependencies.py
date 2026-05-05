@@ -7,7 +7,6 @@ all requests so the ModelRegistry (and its VRAM budget) is never duplicated.
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
 from src.core import ModelRegistry
 from src.pipeline.full_pipeline import FullPipeline

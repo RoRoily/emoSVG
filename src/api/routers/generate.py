@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from src.api.dependencies import get_pipeline
@@ -21,7 +19,7 @@ class GenerateResponse(BaseModel):
     frame_count: int
     duration_ms: float
     reconstruction_paths: dict[str, str]
-    svg_path: Optional[str]
+    svg_path: str | None
     elapsed_seconds: float
     backends: dict[str, str]
 
@@ -49,7 +47,9 @@ async def generate(
     - Optional 3D mesh (OBJ + GLB)
     - Optional SVG vector file
     """
-    import tempfile, shutil, os
+    import os
+    import shutil
+    import tempfile
 
     if not (64 <= width <= 2048):
         raise HTTPException(status_code=422, detail="width must be between 64 and 2048")

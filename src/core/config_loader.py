@@ -12,11 +12,10 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 import yaml
 from pydantic import BaseModel, field_validator
-from pydantic_settings import BaseSettings
 
 from .exceptions import ConfigError
 
@@ -58,7 +57,7 @@ def load_raw(path: str | Path) -> dict[str, Any]:
     return _interpolate(raw)
 
 
-def load_config(path: str | Path, model: Optional[Type[T]] = None) -> Any:
+def load_config(path: str | Path, model: type[T] | None = None) -> Any:
     """
     Load and optionally validate a YAML config file.
 

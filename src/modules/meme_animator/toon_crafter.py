@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -60,9 +59,9 @@ class ToonCrafterWrapper:
 
     def __init__(
         self,
-        model_path: Optional[Path] = None,
+        model_path: Path | None = None,
         num_frames: int = 8,
-        registry: Optional[ModelRegistry] = None,
+        registry: ModelRegistry | None = None,
     ) -> None:
         self._model_path = Path(model_path) if model_path else None
         self._num_frames = num_frames
@@ -83,7 +82,7 @@ class ToonCrafterWrapper:
         self,
         frame_start: np.ndarray,
         frame_end: np.ndarray,
-        num_frames: Optional[int] = None,
+        num_frames: int | None = None,
     ) -> list[np.ndarray]:
         """
         Generate smooth in-between frames from frame_start to frame_end.

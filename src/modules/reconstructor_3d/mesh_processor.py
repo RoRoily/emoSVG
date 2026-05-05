@@ -7,8 +7,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from .schemas import MeshStats
 
 if TYPE_CHECKING:
@@ -38,7 +36,7 @@ class MeshProcessor:
         self.smooth_iterations = smooth_iterations
         self.target_face_count = target_face_count
 
-    def process(self, mesh) -> "trimesh_type.Trimesh":
+    def process(self, mesh) -> trimesh_type.Trimesh:
         import trimesh
 
         if not isinstance(mesh, trimesh.Trimesh):
@@ -87,7 +85,6 @@ class MeshProcessor:
         return mesh
 
     def compute_stats(self, mesh) -> MeshStats:
-        import trimesh
         bounds = mesh.bounding_box.extents if hasattr(mesh, "bounding_box") else (0.0, 0.0, 0.0)
         return MeshStats(
             vertex_count=len(mesh.vertices),
@@ -96,7 +93,7 @@ class MeshProcessor:
             bounding_box=tuple(float(x) for x in bounds),  # type: ignore[arg-type]
         )
 
-    def _simplify(self, mesh) -> "trimesh_type.Trimesh":
+    def _simplify(self, mesh) -> trimesh_type.Trimesh:
         try:
             import pymeshlab  # type: ignore
             ms = pymeshlab.MeshSet()

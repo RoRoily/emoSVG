@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
 from src.core import ModelRegistry
 from src.core.exceptions import IPExtractionError
+
 from .preprocessor import ImagePreprocessor
 from .schemas import ExtractionRequest, IPFeatures
 
@@ -48,8 +48,8 @@ class IPExtractor:
 
     def __init__(
         self,
-        ip_adapter_path: Optional[Path] = None,
-        registry: Optional[ModelRegistry] = None,
+        ip_adapter_path: Path | None = None,
+        registry: ModelRegistry | None = None,
     ) -> None:
         self._ip_adapter_path = Path(ip_adapter_path) if ip_adapter_path else None
         self._registry = registry or ModelRegistry.instance()
@@ -101,7 +101,10 @@ class IPExtractor:
 
             def _loader():
                 try:
-                    from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor  # type: ignore
+                    from transformers import (  # type: ignore
+                        CLIPImageProcessor,
+                        CLIPVisionModelWithProjection,
+                    )
                     processor = CLIPImageProcessor.from_pretrained(model_id)
                     model = CLIPVisionModelWithProjection.from_pretrained(model_id)
                     return (processor, model)
@@ -114,7 +117,10 @@ class IPExtractor:
 
             def _loader():
                 try:
-                    from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor  # type: ignore
+                    from transformers import (  # type: ignore
+                        CLIPImageProcessor,
+                        CLIPVisionModelWithProjection,
+                    )
                     processor = CLIPImageProcessor.from_pretrained(encoder_path)
                     model = CLIPVisionModelWithProjection.from_pretrained(encoder_path)
                     return (processor, model)
@@ -157,14 +163,14 @@ class IPExtractor:
         return restored
 
     @staticmethod
-    def _encode_face(image_path: Path) -> Optional[np.ndarray]:
+    def _encode_face(image_path: Path) -> np.ndarray | None:
         """
         Extract InsightFace identity embedding.
         Returns None if insightface is not installed or no face is detected.
         """
         try:
-            import insightface  # type: ignore
             import cv2
+            import insightface  # type: ignore
             app = insightface.app.FaceAnalysis(providers=["CPUExecutionProvider"])
             app.prepare(ctx_id=0, det_size=(640, 640))
             img = cv2.imread(str(image_path))

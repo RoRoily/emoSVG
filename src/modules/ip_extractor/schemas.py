@@ -1,9 +1,9 @@
 """Data contracts for the ip_extractor module."""
 from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional
-import numpy as np
-from pydantic import BaseModel, Field, field_validator
+
+from pydantic import BaseModel, field_validator
 
 
 class ExtractionRequest(BaseModel):
@@ -29,7 +29,7 @@ class IPFeatures(BaseModel):
     backend_used:   "ip_adapter" | "clip_fallback"
     """
     image_embeds: object        # np.ndarray
-    face_embeds: Optional[object] = None
+    face_embeds: object | None = None
     preprocessed: object        # np.ndarray
     backend_used: str
 

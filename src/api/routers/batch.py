@@ -5,7 +5,6 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -22,14 +21,14 @@ _MAX_BATCH = 8  # hard cap to prevent OOM on a single request
 
 class BatchItemResult(BaseModel):
     filename: str
-    animation_path: Optional[str] = None
-    frame_count: Optional[int] = None
-    duration_ms: Optional[float] = None
+    animation_path: str | None = None
+    frame_count: int | None = None
+    duration_ms: float | None = None
     reconstruction_paths: dict[str, str] = {}
-    svg_path: Optional[str] = None
-    elapsed_seconds: Optional[float] = None
+    svg_path: str | None = None
+    elapsed_seconds: float | None = None
     backends: dict[str, str] = {}
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class BatchGenerateResponse(BaseModel):
@@ -84,7 +83,7 @@ async def batch_generate(
     for upload in files:
         filename = upload.filename or "upload.png"
         suffix = Path(filename).suffix or ".png"
-        tmp_path: Optional[Path] = None
+        tmp_path: Path | None = None
 
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:

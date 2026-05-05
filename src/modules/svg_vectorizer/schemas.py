@@ -1,13 +1,14 @@
 """Data contracts for the svg_vectorizer module."""
 from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 
 class VectorizationRequest(BaseModel):
     source_image_path: Path
-    output_path: Optional[Path] = None   # auto-derived from source if None
+    output_path: Path | None = None   # auto-derived from source if None
     num_segments: int = Field(0, ge=0)   # 0 = auto-detect via SAM
     bezier_tolerance: float = Field(1.5, ge=0.1, le=20.0)
     min_region_area: int = Field(100, ge=1)

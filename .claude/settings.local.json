@@ -8,7 +8,9 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(ls -la requirements*.txt)",
-      "Bash(ls -la configs/)"
+      "Bash(ls -la configs/)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

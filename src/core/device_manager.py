@@ -11,8 +11,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -77,7 +76,7 @@ class DeviceManager:
             return torch.float32
         return self.config.torch_dtype
 
-    def snapshot(self) -> Optional[VRAMSnapshot]:
+    def snapshot(self) -> VRAMSnapshot | None:
         """Return current VRAM state, or None when running on CPU."""
         if self._device.type != "cuda":
             return None
@@ -165,7 +164,7 @@ class DeviceManager:
     # ── Factory helpers ───────────────────────────────────────────────────────
 
     @classmethod
-    def from_env(cls) -> "DeviceManager":
+    def from_env(cls) -> DeviceManager:
         """Build a DeviceManager from environment variables / defaults."""
         import os
 

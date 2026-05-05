@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from src.core import ModelRegistry
 from src.modules.ip_extractor.extractor import IPExtractor
@@ -20,8 +19,9 @@ from src.modules.meme_animator.animator import MemeAnimator
 from src.modules.meme_animator.schemas import AnimationRequest, AnimationResult, MemeExpression
 from src.modules.reconstructor_3d.reconstructor import Reconstructor3D
 from src.modules.reconstructor_3d.schemas import ReconstructionRequest, ReconstructionResult
-from src.modules.svg_vectorizer.vectorizer import SVGVectorizer
 from src.modules.svg_vectorizer.schemas import VectorizationRequest, VectorizationResult
+from src.modules.svg_vectorizer.vectorizer import SVGVectorizer
+
 from .base_pipeline import BasePipeline
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class FullPipelineRequest:
     resolution: tuple[int, int] = (512, 512)
     run_3d: bool = True
     run_svg: bool = True
-    seed: Optional[int] = None
+    seed: int | None = None
     # False (default) = use the peak animation keyframe (exaggerated pose) as
     # input for 3D reconstruction and SVG vectorization.
     # True = use the original source image (preserves canonical proportions).
@@ -50,8 +50,8 @@ class FullPipelineRequest:
 class FullPipelineResult:
     ip_features: IPFeatures
     animation: AnimationResult
-    reconstruction: Optional[ReconstructionResult] = None
-    vectorization: Optional[VectorizationResult] = None
+    reconstruction: ReconstructionResult | None = None
+    vectorization: VectorizationResult | None = None
     elapsed_seconds: float = 0.0
 
 
@@ -72,12 +72,12 @@ class FullPipeline(BasePipeline):
 
     def __init__(
         self,
-        registry: Optional[ModelRegistry] = None,
-        ip_adapter_path: Optional[Path] = None,
-        live_portrait_path: Optional[Path] = None,
-        toon_crafter_path: Optional[Path] = None,
+        registry: ModelRegistry | None = None,
+        ip_adapter_path: Path | None = None,
+        live_portrait_path: Path | None = None,
+        toon_crafter_path: Path | None = None,
         triposr_model_id: str = "stabilityai/TripoSR",
-        sam_checkpoint: Optional[Path] = None,
+        sam_checkpoint: Path | None = None,
         output_root: Path = Path("outputs"),
     ) -> None:
         self._registry = registry or ModelRegistry.instance()
@@ -114,8 +114,8 @@ class FullPipeline(BasePipeline):
     def from_config(
         cls,
         config_path: str = "configs/base.yaml",
-        registry: Optional[ModelRegistry] = None,
-    ) -> "FullPipeline":
+        registry: ModelRegistry | None = None,
+    ) -> FullPipeline:
         from src.core import load_config
         base = load_config(config_path)
         models_root = Path(base.get("models_root", "./models"))
@@ -178,12 +178,12 @@ class FullPipeline(BasePipeline):
             return request.source_image_path
 
         secondary_input_label = "source image" if request.use_source_for_3d_svg else "peak keyframe"
-        secondary_path: Optional[Path] = None
+        secondary_path: Path | None = None
         if request.run_3d or request.run_svg:
             secondary_path = _resolve_secondary_input()
 
         # Step 3 — 3D reconstruction (optional)
-        reconstruction: Optional[ReconstructionResult] = None
+        reconstruction: ReconstructionResult | None = None
         if request.run_3d:
             assert secondary_path is not None
             logger.info("Step 3/4 3D input: %s", secondary_input_label)
@@ -196,7 +196,7 @@ class FullPipeline(BasePipeline):
             )
 
         # Step 4 — SVG vectorization (optional)
-        vectorization: Optional[VectorizationResult] = None
+        vectorization: VectorizationResult | None = None
         if request.run_svg:
             assert secondary_path is not None
             logger.info("Step 4/4 SVG input: %s", secondary_input_label)
@@ -225,7 +225,6 @@ class FullPipeline(BasePipeline):
     def _save_keyframe(self, image, stem: str) -> Path:
         """Persist a keyframe numpy array to disk and return its path."""
         import cv2
-        import numpy as np
         tmp_dir = self._output_root / "_tmp_keyframes"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         path = tmp_dir / f"{stem}_peak_{int(time.time())}.png"

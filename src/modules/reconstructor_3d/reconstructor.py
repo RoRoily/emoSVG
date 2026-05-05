@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
 from src.core import ModelRegistry
-from src.core.exceptions import MissingModelWeightsError, ReconstructionError
-from .mesh_processor import MeshProcessor
+from src.core.exceptions import ReconstructionError
+
 from .exporter import MeshExporter
-from .schemas import ReconstructionRequest, ReconstructionResult, MeshStats
+from .mesh_processor import MeshProcessor
+from .schemas import ReconstructionRequest, ReconstructionResult
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class Reconstructor3D:
         self,
         model_id: str = "stabilityai/TripoSR",
         output_dir: Path = Path("outputs/meshes"),
-        registry: Optional[ModelRegistry] = None,
+        registry: ModelRegistry | None = None,
     ) -> None:
         self._model_id_or_path = model_id
         self._output_dir = output_dir
@@ -105,8 +105,8 @@ class Reconstructor3D:
     def from_config(
         cls,
         config_path: str | Path = "configs/reconstruction_3d.yaml",
-        registry: Optional[ModelRegistry] = None,
-    ) -> "Reconstructor3D":
+        registry: ModelRegistry | None = None,
+    ) -> Reconstructor3D:
         from src.core import load_config
         cfg = load_config(config_path)
         return cls(
@@ -172,8 +172,8 @@ class Reconstructor3D:
             channels = img.shape[2] if img.ndim == 3 else 1
             if channels == 3:
                 try:
-                    from rembg import remove as rembg_remove  # type: ignore
                     import PIL.Image
+                    from rembg import remove as rembg_remove  # type: ignore
                     pil = PIL.Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
                     pil_no_bg = rembg_remove(pil)
                     img = np.array(pil_no_bg)  # RGBA
@@ -208,7 +208,6 @@ class Reconstructor3D:
         -------
         HxWx4 float32 image with the subject centred and scaled.
         """
-        import cv2
         alpha = rgba[..., 3]
         mask = (alpha > 0.05).astype(np.uint8)
 
