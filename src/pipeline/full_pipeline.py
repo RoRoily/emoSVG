@@ -166,7 +166,7 @@ class FullPipeline(BasePipeline):
             animation.output_path,
         )
 
-        # Resolve the input path for steps 3 and 4.
+        # Resolve the input path for steps 3 and 4 — computed once and reused.
         # use_source_for_3d_svg=True  → original source image (canonical proportions)
         # use_source_for_3d_svg=False → peak animation keyframe (exaggerated pose, default)
         def _resolve_secondary_input() -> Path:
@@ -175,16 +175,18 @@ class FullPipeline(BasePipeline):
             if animation.keyframes:
                 peak_kf = animation.keyframes[len(animation.keyframes) // 2]
                 return self._save_keyframe(peak_kf.image, request.source_image_path.stem)
-            return request.source_image_path  # fallback if no keyframes
+            return request.source_image_path
+
+        secondary_input_label = "source image" if request.use_source_for_3d_svg else "peak keyframe"
+        secondary_path: Optional[Path] = None
+        if request.run_3d or request.run_svg:
+            secondary_path = _resolve_secondary_input()
 
         # Step 3 — 3D reconstruction (optional)
         reconstruction: Optional[ReconstructionResult] = None
         if request.run_3d:
-            secondary_path = _resolve_secondary_input()
-            logger.info(
-                "Step 3/4 3D input: %s",
-                "source image" if request.use_source_for_3d_svg else "peak keyframe",
-            )
+            assert secondary_path is not None
+            logger.info("Step 3/4 3D input: %s", secondary_input_label)
             reconstruction = self._reconstructor.reconstruct(
                 ReconstructionRequest(source_image_path=secondary_path)
             )
@@ -196,11 +198,8 @@ class FullPipeline(BasePipeline):
         # Step 4 — SVG vectorization (optional)
         vectorization: Optional[VectorizationResult] = None
         if request.run_svg:
-            secondary_path = _resolve_secondary_input()
-            logger.info(
-                "Step 4/4 SVG input: %s",
-                "source image" if request.use_source_for_3d_svg else "peak keyframe",
-            )
+            assert secondary_path is not None
+            logger.info("Step 4/4 SVG input: %s", secondary_input_label)
             vectorization = self._vectorizer.vectorize(
                 VectorizationRequest(source_image_path=secondary_path)
             )
