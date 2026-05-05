@@ -1,0 +1,17 @@
+# SVG 矢量化模块配置
+sam:
+  model_type: "vit_h"
+  checkpoint: "${SAM_MODEL_PATH}"
+  pred_iou_thresh: 0.88
+  stability_score_thresh: 0.95
+  min_mask_region_area: 100
+
+bezier:
+  tolerance: 1.5             # 曲线拟合误差容限（像素）
+  max_nodes_per_path: 200    # 单条路径最大节点数
+  smooth_corners: true
+
+svg_output:
+  layer_naming: "semantic"   # semantic | index
+  embed_raster_fallback: false
+  precision: 2               # 坐标小数位数

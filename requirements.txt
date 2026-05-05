@@ -1,0 +1,63 @@
+# ── 运行时基础 ──────────────────────────────────────────────
+python-dotenv==1.0.1
+pydantic==2.7.1
+pydantic-settings==2.3.4
+PyYAML==6.0.1
+
+# ── Web 框架 ────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+
+# ── 深度学习核心 ─────────────────────────────────────────────
+# PyTorch 需单独按 CUDA 版本安装：
+# pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu121
+torch==2.3.0
+torchvision==0.18.0
+accelerate==0.30.0
+
+# ── Diffusers 生态 ──────────────────────────────────────────
+diffusers==0.29.0
+transformers==4.41.0
+huggingface-hub==0.23.2
+safetensors==0.4.3
+tokenizers==0.19.1
+
+# ── 图像处理 ────────────────────────────────────────────────
+opencv-python-headless==4.9.0.80
+Pillow==10.3.0
+imageio==2.34.1
+imageio-ffmpeg==0.5.1
+scikit-image==0.23.2
+
+# ── 人脸关键点（LivePortrait / InstantID 依赖）──────────────
+insightface==0.7.3
+onnxruntime-gpu==1.18.0
+
+# ── 几何变换与动画 ──────────────────────────────────────────
+einops==0.8.0
+kornia==0.7.3
+mediapipe==0.10.14
+
+# ── 3D 重建 ─────────────────────────────────────────────────
+trimesh==4.3.2
+pymeshlab==2023.12.post1
+open3d==0.18.0
+rembg==2.0.57
+
+# ── SVG 矢量化 ──────────────────────────────────────────────
+svgwrite==1.4.3
+svgpathtools==1.6.1
+
+# ── 显存监控 ────────────────────────────────────────────────
+gpustat==1.1.1
+psutil==5.9.8
+
+# ── 测试 ────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.7
+httpx==0.27.0
+
+# ── Git 源安装（运行 scripts/download_models.py 时处理）──────
+# pip install git+https://github.com/facebookresearch/segment-anything.git
+# pip install git+https://github.com/VAST-AI-Research/TripoSR.git

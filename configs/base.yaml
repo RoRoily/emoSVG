@@ -1,0 +1,15 @@
+# 全局基础配置 — 所有模块共享
+device: "cuda"           # cuda | cpu
+torch_dtype: "float16"   # float16 | bfloat16 | float32
+
+vram:
+  budget_gb: 10.0        # 触发 offload 的显存上限
+  safety_margin_gb: 0.5  # 预留给 CUDA 运行时的缓冲
+  offload_target: "cpu"  # offload 目标：cpu | disk
+
+models_root: "./models"
+output_root: "./outputs"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s — %(message)s"

@@ -1,0 +1,21 @@
+# Meme 动画生成模块配置
+backend: "live_portrait"   # live_portrait | toon_crafter
+
+live_portrait:
+  model_path: "${LIVE_PORTRAIT_MODEL_PATH}"
+  inference_cfg:
+    flag_use_half_precision: true
+    flag_lip_zero: false
+    flag_eye_retargeting: true
+    flag_lip_retargeting: true
+
+squash_stretch:
+  eye_bulge_scale: 2.5      # 眼球突出倍率（1.0 = 无形变）
+  jaw_drop_scale: 1.8       # 下巴拉伸倍率
+  head_squash_scale: 0.7    # 头部压扁倍率
+  bounce_frames: 3          # 弹性回弹帧数
+
+output:
+  fps: 24
+  format: "gif"             # gif | mp4
+  resolution: [512, 512]

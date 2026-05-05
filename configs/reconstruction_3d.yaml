@@ -1,0 +1,16 @@
+# 3D 重建模块配置
+backend: "triposr"
+
+triposr:
+  model_id: "stabilityai/TripoSR"
+  chunk_size: 8192
+  mc_resolution: 256         # Marching Cubes 分辨率（越高越精细，越慢）
+
+mesh_processing:
+  remove_small_components: true
+  smooth_iterations: 2
+  target_face_count: 50000   # 简化目标面数
+
+export:
+  formats: ["obj", "glb"]
+  include_texture: true
