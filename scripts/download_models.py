@@ -130,11 +130,12 @@ def _verify_live_portrait(dest: Path) -> None:
 def install_git_packages() -> None:
     """Install packages that are only available via git."""
     import subprocess
+    _gh = os.getenv("GITHUB_MIRROR", "https://github.com")
     packages = [
-        ("segment-anything", "git+https://github.com/facebookresearch/segment-anything.git"),
-        ("TripoSR",          "git+https://github.com/VAST-AI-Research/TripoSR.git"),
-        ("liveportrait",     "git+https://github.com/KwaiVGI/LivePortrait.git"),
-        ("tooncrafter",      "git+https://github.com/ToonCrafter/ToonCrafter.git"),
+        ("segment-anything", f"git+{_gh}/facebookresearch/segment-anything.git"),
+        ("TripoSR",          f"git+{_gh}/VAST-AI-Research/TripoSR.git"),
+        ("liveportrait",     f"git+{_gh}/KwaiVGI/LivePortrait.git"),
+        ("tooncrafter",      f"git+{_gh}/ToonCrafter/ToonCrafter.git"),
     ]
     for name, url in packages:
         logger.info("Installing %s from git...", name)
@@ -145,7 +146,7 @@ def install_git_packages() -> None:
         if result.returncode == 0:
             logger.info("%s installed OK", name)
         else:
-            logger.warning("%s install failed: %s", name, result.stderr[-200:])
+            logger.warning("%s install failed: %s", name, result.stderr)
 
 
 def download_toon_crafter() -> None:
