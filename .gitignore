@@ -42,4 +42,4 @@ htmlcov/
 
 # HuggingFace cache
 *.hf_cache/
-
+claudecode_prompt/

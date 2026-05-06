@@ -42,6 +42,13 @@ class AnimationRequest(BaseModel):
     # ToonCrafter inter-frame smoothing (applied after LivePortrait rendering)
     use_toon_crafter: bool = False
     frames_between: int = Field(4, ge=1, le=16)
+    # ToonCrafter primary driver mode: LivePortrait renders only the peak frame,
+    # then ToonCrafter generates the full sequence from (source, peak) boundaries.
+    # Produces true cartoon Squash-and-Stretch via video diffusion.
+    # Requires use_toon_crafter=True to take effect.
+    use_toon_crafter_as_driver: bool = False
+    # Total frames in the driver-mode output (including boundary frames).
+    driver_num_frames: int = Field(16, ge=2, le=64)
     # IP-Adapter character consistency embedding (from IPExtractor).
     # When provided, LivePortrait uses it to condition appearance features
     # so the character identity is preserved across deformation frames.

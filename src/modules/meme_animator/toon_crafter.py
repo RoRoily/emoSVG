@@ -1,28 +1,33 @@
 """
 ToonCrafter wrapper for the meme_animator module.
 
-ToonCrafter is a video interpolation model for cartoon/anime content.
+ToonCrafter is a video diffusion model for cartoon/anime content.
 In the emoSVG pipeline it serves two roles:
 
-1. Frame interpolation: given a wind-up frame and a peak frame produced by
-   LivePortrait, ToonCrafter generates smooth in-between frames that respect
-   cartoon-style motion.
+1. Primary driver mode (use_toon_crafter_as_driver=True):
+   Given a neutral source frame and a peak expression frame produced by a
+   single LivePortrait render, ToonCrafter's video diffusion backbone generates
+   the *entire* animation sequence — wind-up, attack, hold, and settle — as a
+   temporally coherent cartoon video.  This produces true Squash-and-Stretch
+   motion because the diffusion model interpolates in image space rather than
+   warping keypoint coordinates.
 
-2. Standalone animation: when LivePortrait is unavailable, ToonCrafter can
-   generate a short animation from a source image and a target expression
-   image (requires two reference frames).
+   Call: generate_from_boundaries(source_frame, peak_frame, num_frames)
+
+2. Interpolation mode (legacy, use_toon_crafter=True without driver flag):
+   Given a sequence of LivePortrait keyframes, ToonCrafter inserts
+   frames_between interpolated frames between each consecutive pair for
+   smoother cartoon motion.
+
+   Call: smooth_sequence(keyframes, frames_between)
 
 Architecture note:
-    ToonCrafter is NOT a drop-in replacement for LivePortrait.  It operates on
-    pairs of frames (start, end) and fills the gap, whereas LivePortrait drives
-    motion from a single source image + coefficient vector.  The two backends
-    are complementary:
+    In driver mode LivePortrait renders only ONE frame (the peak expression).
+    ToonCrafter then owns the full temporal generation.  In interpolation mode
+    LivePortrait renders the full keyframe sequence and ToonCrafter fills gaps.
 
-        LivePortrait  ->  per-frame rendering   (primary)
-        ToonCrafter   ->  inter-frame smoothing  (secondary / standalone)
-
-When ToonCrafter weights are absent the wrapper falls back to linear blending
-so the rest of the pipeline can be tested without GPU or model downloads.
+When ToonCrafter weights are absent both modes fall back to CPU-only
+implementations so the pipeline can be tested without GPU or model downloads.
 """
 from __future__ import annotations
 
@@ -77,6 +82,42 @@ class ToonCrafterWrapper:
             )
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    def generate_from_boundaries(
+        self,
+        source_frame: np.ndarray,
+        peak_frame: np.ndarray,
+        num_frames: int = 16,
+    ) -> list[np.ndarray]:
+        """
+        Primary driver mode: generate a full animation sequence from a neutral
+        source frame to a peak expression frame.
+
+        ToonCrafter's video diffusion backbone treats source_frame and
+        peak_frame as the first and last frames of a video clip and generates
+        num_frames temporally coherent in-between frames.  The result is a
+        complete wind-up → attack → hold arc in a single diffusion pass.
+
+        Parameters
+        ----------
+        source_frame: HxWx3 uint8 BGR — neutral expression (animation start).
+        peak_frame:   HxWx3 uint8 BGR — peak expression (animation end).
+        num_frames:   Total frames in the output sequence including boundaries.
+                      Must be >= 2.  Typical values: 12–24.
+
+        Returns
+        -------
+        List of num_frames HxWx3 uint8 BGR frames:
+            [source_frame, generated_1, ..., generated_N, peak_frame]
+        """
+        if num_frames < 2:
+            return [source_frame, peak_frame]
+
+        if self._use_fallback:
+            return self._driver_fallback(source_frame, peak_frame, num_frames)
+
+        with self._registry.model_context(self.MODEL_ID, offload_after=True) as model:
+            return self._toon_crafter_driver(model, source_frame, peak_frame, num_frames)
 
     def interpolate(
         self,
@@ -184,6 +225,79 @@ class ToonCrafterWrapper:
             cv2.cvtColor(np.array(f, dtype=np.uint8), cv2.COLOR_RGB2BGR)
             for f in frames_rgb
         ]
+
+    def _toon_crafter_driver(
+        self,
+        model,
+        source_frame: np.ndarray,
+        peak_frame: np.ndarray,
+        num_frames: int,
+    ) -> list[np.ndarray]:
+        """
+        Real ToonCrafter inference in driver mode.
+
+        Calls model.generate(frame0, frame1, num_frames) which uses the video
+        diffusion backbone to produce a temporally coherent sequence.  The API
+        mirrors ToonCrafter's official inference interface where frame0/frame1
+        are the conditioning boundary frames.
+        """
+        source_rgb = cv2.cvtColor(source_frame, cv2.COLOR_BGR2RGB)
+        peak_rgb   = cv2.cvtColor(peak_frame,   cv2.COLOR_BGR2RGB)
+        try:
+            # ToonCrafter's generate() API: boundary-conditioned video generation.
+            # num_frames includes the two boundary frames.
+            frames_rgb = model.generate(
+                frame0=source_rgb,
+                frame1=peak_rgb,
+                num_frames=num_frames,
+            )
+        except AttributeError:
+            # Older ToonCrafter versions expose interpolate() only — fall back
+            # to calling interpolate with (num_frames - 2) inner frames.
+            inner = max(num_frames - 2, 1)
+            frames_rgb = model.interpolate(
+                frame0=source_rgb,
+                frame1=peak_rgb,
+                num_frames=inner,
+            )
+        except Exception as exc:
+            raise AnimationError(f"ToonCrafter driver inference failed: {exc}") from exc
+
+        return [
+            cv2.cvtColor(np.array(f, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+            for f in frames_rgb
+        ]
+
+    @staticmethod
+    def _driver_fallback(
+        source_frame: np.ndarray,
+        peak_frame: np.ndarray,
+        num_frames: int,
+    ) -> list[np.ndarray]:
+        """
+        CPU-only fallback for driver mode.
+
+        Produces a smooth ease-in/ease-out sequence from source to peak using
+        a cosine schedule, which approximates the anticipation → attack → hold
+        arc better than a linear blend.
+        """
+        import math
+
+        h, w = source_frame.shape[:2]
+        if peak_frame.shape[:2] != (h, w):
+            peak_frame = cv2.resize(peak_frame, (w, h), interpolation=cv2.INTER_LINEAR)
+
+        src_f  = source_frame.astype(np.float32)
+        peak_f = peak_frame.astype(np.float32)
+
+        frames: list[np.ndarray] = []
+        for i in range(num_frames):
+            # Cosine ease-in-out: slow start, fast middle, slow end
+            t_linear = i / max(num_frames - 1, 1)
+            t = (1.0 - math.cos(t_linear * math.pi)) / 2.0
+            blended = (1.0 - t) * src_f + t * peak_f
+            frames.append(np.clip(blended, 0, 255).astype(np.uint8))
+        return frames
 
     # ── Linear-blend fallback (no model required) ─────────────────────────────
 

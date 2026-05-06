@@ -101,18 +101,42 @@ class MemeAnimator:
 
         # 3. Render keyframes via LivePortrait (model stays on GPU for the full batch)
         try:
-            rendered_frames = self._live_portrait.render_sequence(
-                source_bgr,
-                param_sequence,
-                ip_image_embeds=request.ip_image_embeds,
-            )
+            if request.use_toon_crafter and request.use_toon_crafter_as_driver:
+                # Driver mode: render only the peak frame via LivePortrait, then
+                # hand (source, peak) to ToonCrafter to generate the full sequence.
+                peak_params = self._get_peak_params(param_sequence)
+                peak_frames = self._live_portrait.render_sequence(
+                    source_bgr,
+                    [peak_params],
+                    ip_image_embeds=request.ip_image_embeds,
+                )
+                peak_frame = peak_frames[0]
+                logger.info("Driver mode: peak frame rendered, handing to ToonCrafter")
+                rendered_frames = self._toon_crafter.generate_from_boundaries(
+                    source_bgr,
+                    peak_frame,
+                    num_frames=request.driver_num_frames,
+                )
+                logger.info(
+                    "ToonCrafter driver done: %d frames generated", len(rendered_frames)
+                )
+            else:
+                rendered_frames = self._live_portrait.render_sequence(
+                    source_bgr,
+                    param_sequence,
+                    ip_image_embeds=request.ip_image_embeds,
+                )
         except Exception as exc:
             raise AnimationError(f"Frame rendering failed: {exc}") from exc
 
-        # 4. Optional ToonCrafter inter-frame smoothing.
+        # 4. Optional ToonCrafter inter-frame smoothing (interpolation mode only).
         # LivePortrait produces one frame per SquashParams step; ToonCrafter fills
         # the gaps between consecutive keyframes for smoother cartoon motion.
-        if request.use_toon_crafter and len(rendered_frames) >= 2:
+        if (
+            request.use_toon_crafter
+            and not request.use_toon_crafter_as_driver
+            and len(rendered_frames) >= 2
+        ):
             logger.info(
                 "ToonCrafter smoothing: %d keyframes -> %d frames_between",
                 len(rendered_frames),
@@ -160,7 +184,8 @@ class MemeAnimator:
             tc_backend = (
                 "toon_crafter_fallback" if self._toon_crafter._use_fallback else "toon_crafter"
             )
-            backend = f"{lp_backend}+{tc_backend}"
+            mode = "driver" if request.use_toon_crafter_as_driver else "interpolator"
+            backend = f"{lp_backend}+{tc_backend}[{mode}]"
         else:
             backend = lp_backend
 
@@ -208,3 +233,12 @@ class MemeAnimator:
         expr = request.expression.value
         ts   = int(time.time())
         return f"{stem}_{expr}_{ts}.{request.output_format}"
+
+    @staticmethod
+    def _get_peak_params(param_sequence: list) -> object:
+        """Return the peak SquashParams from a motion curve sequence.
+
+        The peak is the frame with the highest jaw_drop_scale, which is the
+        most reliable proxy for expression intensity across all presets.
+        """
+        return max(param_sequence, key=lambda p: p.jaw_drop_scale)

@@ -312,7 +312,35 @@ _tensor_to_bgr()         → HxWx3 uint8 BGR frame
 
 #### ToonCrafterWrapper
 
-Optional inter-frame smoother. After LivePortrait renders N keyframes, ToonCrafter inserts `frames_between` interpolated frames between each consecutive pair.
+Cartoon-aware video generation with two operating modes selected by `AnimationRequest` flags:
+
+**Mode 1 — Primary driver** (`use_toon_crafter=True`, `use_toon_crafter_as_driver=True`):
+
+LivePortrait renders only the single peak expression frame. ToonCrafter's video diffusion backbone then generates the *entire* animation sequence from `(source_frame, peak_frame)` as boundary conditions, producing `driver_num_frames` temporally coherent frames in one diffusion pass.
+
+```
+source_bgr  ──────────────────────────────────────────────────────┐
+                                                                   │
+LivePortrait (1 frame only: peak params)                          │
+    │                                                              │
+    ▼                                                              │
+peak_frame                                                         │
+    │                                                              │
+    └──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+              ToonCrafter.generate_from_boundaries(
+                  source_frame, peak_frame, num_frames=driver_num_frames)
+                              │
+                              ▼
+              [source, gen_1, ..., gen_N, peak]   ← full animation
+```
+
+This produces true Squash-and-Stretch motion because the diffusion model interpolates in image space rather than warping keypoint coordinates, bypassing LivePortrait's human-face expression space limitation.
+
+**Mode 2 — Interpolator** (`use_toon_crafter=True`, `use_toon_crafter_as_driver=False`):
+
+LivePortrait renders the full keyframe sequence from the MotionDesigner curve. ToonCrafter inserts `frames_between` interpolated frames between each consecutive pair for smoother cartoon motion.
 
 ```
 LivePortrait keyframes:  [F0, F1, F2, F3, ...]
@@ -323,7 +351,18 @@ After ToonCrafter (n=3): [F0, i1, i2, i3, F1, i4, i5, i6, F2, ...]
 
 **VRAM**: ~8 GB
 
-**Fallback**: linear pixel blending between frames
+**Fallbacks**:
+- Driver mode: cosine-schedule pixel blend from source to peak
+- Interpolator mode: linear pixel blend between frames
+
+#### AnimationRequest flags summary
+
+| Flag | Default | Effect |
+|---|---|---|
+| `use_toon_crafter` | `False` | Enable ToonCrafter (either mode) |
+| `use_toon_crafter_as_driver` | `False` | Use driver mode (requires `use_toon_crafter=True`) |
+| `driver_num_frames` | `16` | Total frames in driver-mode output (2–64) |
+| `frames_between` | `4` | Interpolated frames per gap in interpolator mode (1–16) |
 
 ---
 
@@ -539,7 +578,8 @@ Every module detects at construction time whether its weights are available and 
 |---|---|---|
 | IPExtractor | IP-Adapter CLIP ViT-L/14 | HF CLIP ViT-L/14 (auto-download) |
 | LivePortraitWrapper | LivePortrait pipeline | OpenCV affine warp |
-| ToonCrafterWrapper | ToonCrafter inference | Linear pixel blend |
+| ToonCrafterWrapper (driver) | ToonCrafter generate_from_boundaries | Cosine-schedule pixel blend |
+| ToonCrafterWrapper (interpolator) | ToonCrafter interpolate | Linear pixel blend |
 | Reconstructor3D | TripoSR | trimesh UV-sphere |
 | SVGVectorizer | SAM ViT-H | OpenCV K-means contours |
 
@@ -548,6 +588,12 @@ This design means the full test suite (221 tests) runs without any GPU or downlo
 ---
 
 ## Key Design Decisions
+
+**ToonCrafter dual-mode design**
+ToonCrafter serves two roles selected at request time. In driver mode (`use_toon_crafter_as_driver=True`) LivePortrait renders only the peak frame and ToonCrafter owns the full temporal generation via its video diffusion backbone — this produces true cartoon Squash-and-Stretch by interpolating in image space rather than warping keypoint coordinates. In interpolator mode it fills gaps between a full LivePortrait keyframe sequence. The two modes share the same `ToonCrafterWrapper` and `ModelRegistry` entry; only the call path in `MemeAnimator.generate()` differs.
+
+**LivePortrait expression space limitation**
+LivePortrait's 63-dim expression coefficient space is calibrated on human face data. Pushing coefficients beyond human physiological limits (required for true Meme exaggeration) causes mesh artifacts. Driver mode bypasses this by using ToonCrafter's diffusion backbone for temporal generation, with LivePortrait reduced to rendering a single peak frame as a visual target.
 
 **Single process, shared registry**
 Multi-process workers would require each process to load its own model copies, multiplying VRAM usage. Single-process with `workers=1` allows all modules to share one registry and one VRAM budget.
