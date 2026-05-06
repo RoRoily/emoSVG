@@ -130,23 +130,46 @@ def _verify_live_portrait(dest: Path) -> None:
 def install_git_packages() -> None:
     """Install packages that are only available via git."""
     import subprocess
-    _gh = os.getenv("GITHUB_MIRROR", "https://github.com")
+    import tempfile
+    import shutil
+
+    _use_ssh = os.getenv("GITHUB_SSH", "1") == "1"
     packages = [
-        ("segment-anything", f"git+{_gh}/facebookresearch/segment-anything.git"),
-        ("TripoSR",          f"git+{_gh}/VAST-AI-Research/TripoSR.git"),
-        ("liveportrait",     f"git+{_gh}/KwaiVGI/LivePortrait.git"),
-        ("tooncrafter",      f"git+{_gh}/ToonCrafter/ToonCrafter.git"),
+        ("segment-anything", "facebookresearch/segment-anything"),
+        ("TripoSR",          "VAST-AI-Research/TripoSR"),
+        ("liveportrait",     "KwaiVGI/LivePortrait"),
+        ("tooncrafter",      "ToonCrafter/ToonCrafter"),
     ]
-    for name, url in packages:
-        logger.info("Installing %s from git...", name)
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", url],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            logger.info("%s installed OK", name)
+
+    for name, repo in packages:
+        if _use_ssh:
+            repo_url = f"git@github.com:{repo}.git"
         else:
-            logger.warning("%s install failed: %s", name, result.stderr)
+            _mirror = os.getenv("GITHUB_MIRROR", "https://github.com")
+            repo_url = f"{_mirror}/{repo}.git"
+        if _mirror:
+            repo_url = repo_url.replace("https://github.com", _mirror)
+        tmpdir = Path(tempfile.mkdtemp(prefix=f"emosvg_{name}_"))
+        try:
+            logger.info("Cloning %s into %s ...", name, tmpdir)
+            clone = subprocess.run(
+                ["git", "clone", "--depth=1", repo_url, str(tmpdir)],
+                capture_output=True, text=True,
+            )
+            if clone.returncode != 0:
+                logger.warning("%s clone failed:\n%s", name, clone.stderr)
+                continue
+            logger.info("Installing %s from local clone...", name)
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", str(tmpdir)],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                logger.info("%s installed OK", name)
+            else:
+                logger.warning("%s install failed:\n%s", name, result.stderr)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def download_toon_crafter() -> None:
