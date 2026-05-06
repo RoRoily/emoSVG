@@ -147,8 +147,6 @@ def install_git_packages() -> None:
         else:
             _mirror = os.getenv("GITHUB_MIRROR", "https://github.com")
             repo_url = f"{_mirror}/{repo}.git"
-        if _mirror:
-            repo_url = repo_url.replace("https://github.com", _mirror)
         tmpdir = Path(tempfile.mkdtemp(prefix=f"emosvg_{name}_"))
         try:
             logger.info("Cloning %s into %s ...", name, tmpdir)
