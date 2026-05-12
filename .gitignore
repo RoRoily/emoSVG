@@ -43,3 +43,4 @@ htmlcov/
 # HuggingFace cache
 *.hf_cache/
 claudecode_prompt/
+necessary_git_repository/
