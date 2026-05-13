@@ -179,6 +179,94 @@ _EXPRESSION_TO_TEMPLATE: dict[MemeExpression, str] = {
 }
 
 
+def _candidate_liveportrait_src_dirs(model_path: Path | None) -> list[Path]:
+    """Return plausible official LivePortrait ``src`` directories."""
+    import os
+
+    candidates: list[Path] = []
+    for env_name in ("LIVE_PORTRAIT_SOURCE_ROOT", "LIVE_PORTRAIT_SRC"):
+        raw = os.getenv(env_name)
+        if raw:
+            p = Path(raw).expanduser()
+            candidates.append(p / "src" if (p / "src").exists() else p)
+
+    if model_path is not None:
+        candidates.append(model_path / "src")
+
+    cwd = Path.cwd()
+    candidates.extend([
+        cwd / "third_party" / "LivePortrait" / "src",
+        cwd / "third_party" / "LivePortrait-main" / "src",
+        cwd.parent / "third_party" / "LivePortrait" / "src",
+        cwd.parent / "third_party" / "LivePortrait-main" / "src",
+        Path.home() / "workspace" / "third_party" / "LivePortrait" / "src",
+        Path.home() / "workspace" / "third_party" / "LivePortrait-main" / "src",
+    ])
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for p in candidates:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    return unique
+
+
+def _alias_official_liveportrait_src(source_dir: Path) -> None:
+    """
+    Expose the official LivePortrait ``src`` layout as a ``liveportrait`` package.
+
+    The upstream repo often stores files as ``src/live_portrait_pipeline.py`` and
+    uses relative imports inside that module. Importing it as a top-level module
+    fails, so we create a lightweight package alias with ``source_dir`` as its
+    package search path.
+    """
+    import sys
+    import types
+
+    pkg = types.ModuleType("liveportrait")
+    pkg.__file__ = str(source_dir / "__init__.py")
+    pkg.__package__ = "liveportrait"
+    pkg.__path__ = [str(source_dir)]  # type: ignore[attr-defined]
+    sys.modules["liveportrait"] = pkg
+
+
+def _import_liveportrait_api(model_path: Path | None):
+    """
+    Import LivePortrait classes, supporting both package and official src layouts.
+    """
+    try:
+        from liveportrait.config.inference_config import InferenceConfig  # type: ignore
+        from liveportrait.live_portrait_pipeline import LivePortraitPipeline  # type: ignore
+        return InferenceConfig, LivePortraitPipeline
+    except ImportError as first_exc:
+        last_exc: Exception = first_exc
+
+    for source_dir in _candidate_liveportrait_src_dirs(model_path):
+        source_dir = source_dir.expanduser()
+        if not (source_dir / "live_portrait_pipeline.py").exists():
+            continue
+        try:
+            _alias_official_liveportrait_src(source_dir.resolve())
+            from liveportrait.config.inference_config import InferenceConfig  # type: ignore
+            from liveportrait.live_portrait_pipeline import LivePortraitPipeline  # type: ignore
+            logger.info("Using LivePortrait source layout from %s", source_dir)
+            return InferenceConfig, LivePortraitPipeline
+        except ImportError as exc:
+            last_exc = exc
+
+    raise AnimationError(
+        "LivePortrait package is not importable. If using the official repo zip, "
+        "either set LIVE_PORTRAIT_SOURCE_ROOT=/path/to/LivePortrait or create a "
+        "compat package whose parent is on Python path, e.g. "
+        "~/workspace/third_party/liveportrait_compat/liveportrait copied from "
+        "LivePortrait/src. Also install small runtime deps such as: "
+        "pip install tyro pykalman lmdb ffmpeg-python. "
+        f"Last import error: {last_exc}"
+    ) from last_exc
+
+
 # ── Main wrapper class ────────────────────────────────────────────────────────
 
 class LivePortraitWrapper:
@@ -318,14 +406,7 @@ class LivePortraitWrapper:
         model_path = self._model_path  # capture for closure
 
         def _loader():
-            try:
-                from liveportrait.config.inference_config import InferenceConfig  # type: ignore
-                from liveportrait.live_portrait_pipeline import LivePortraitPipeline  # type: ignore
-            except ImportError as exc:
-                raise AnimationError(
-                    "liveportrait package not installed.\n"
-                    "Run: pip install git+https://github.com/KwaiVGI/LivePortrait.git"
-                ) from exc
+            InferenceConfig, LivePortraitPipeline = _import_liveportrait_api(model_path)
 
             weights = model_path / "pretrained_weights"
             try:

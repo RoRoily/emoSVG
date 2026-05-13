@@ -12,6 +12,332 @@
 
 ---
 
+## A. 推荐：从污染环境重建 clean env
+
+如果你已经执行过第三方项目的完整 requirements，例如：
+
+```bash
+pip install -r ~/workspace/third_party/LivePortrait/requirements.txt
+pip install -r ~/workspace/third_party/ToonCrafter/requirements.txt
+```
+
+并且看到过这些现象：
+
+```text
+torch 2.3.0 被换成 torch 2.11.0
+torchvision 0.18.0 被换成 torchvision 0.26.0
+numpy 1.26.4 被换成 numpy 1.24.2
+Pillow / imageio / protobuf / transformers 被降级或升级
+pip is looking at multiple versions ...
+```
+
+建议不要继续修旧环境，直接新建一个干净环境。第三方 zip、源码目录、模型权重不用删，只重建 Python 环境即可。
+
+### A.1 保留已有文件
+
+这些可以保留：
+
+```text
+~/workspace/emoSVG
+~/workspace/third_party/
+~/workspace/third_party_zips/
+/data3/zhengmuhan/emosvg_models/
+/data3/zhengmuhan/emosvg_outputs/
+```
+
+不建议保留的是已经被污染的 conda env。
+
+### A.2 新建 conda 环境
+
+```bash
+conda deactivate
+conda create -n zmhEmoSVG_clean python=3.10 -y
+conda activate zmhEmoSVG_clean
+
+cd ~/workspace/emoSVG
+python -m pip install --upgrade pip setuptools wheel
+```
+
+### A.3 安装 CUDA 版 PyTorch
+
+如果服务器 CUDA 12.1/12.x 可用，优先：
+
+```bash
+pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu121
+```
+
+如果是 CUDA 11.8：
+
+```bash
+pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu118
+```
+
+验证：
+
+```bash
+python - <<'PY'
+import torch, torchvision
+print("torch:", torch.__version__)
+print("torchvision:", torchvision.__version__)
+print("cuda available:", torch.cuda.is_available())
+print("torch cuda:", torch.version.cuda)
+if torch.cuda.is_available():
+    print("gpu:", torch.cuda.get_device_name(0))
+PY
+```
+
+期望类似：
+
+```text
+torch: 2.3.0+cu121
+torchvision: 0.18.0+cu121
+cuda available: True
+```
+
+### A.4 安装 emoSVG 主项目依赖
+
+CUDA 12.1：
+
+```bash
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+pip install -e .
+```
+
+CUDA 11.8：
+
+```bash
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
+pip install -e .
+```
+
+然后把 NumPy 和 OpenCV 拉回项目推荐组合：
+
+```bash
+pip install "numpy==1.26.4" -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip uninstall opencv-contrib-python opencv-python opencv-python-headless -y
+pip install opencv-python-headless==4.9.0.80 -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+验证核心版本：
+
+```bash
+python - <<'PY'
+import torch, torchvision
+import numpy as np
+import cv2
+import PIL
+import imageio
+
+print("torch:", torch.__version__)
+print("torchvision:", torchvision.__version__)
+print("cuda:", torch.cuda.is_available(), torch.version.cuda)
+print("numpy:", np.__version__)
+print("cv2:", cv2.__version__)
+print("PIL:", PIL.__version__)
+print("imageio:", imageio.__version__)
+PY
+```
+
+期望：
+
+```text
+torch: 2.3.0+cu121
+torchvision: 0.18.0+cu121
+cuda: True 12.1
+numpy: 1.26.4
+cv2: 4.9.0
+```
+
+### A.5 跑 fallback smoke test
+
+先不装第三方研究项目依赖，直接跑项目自带 smoke test：
+
+```bash
+python scripts/smoke_test.py
+```
+
+期望：
+
+```text
+Result: 5/5 passed
+```
+
+如果这里失败，优先修主环境，不要继续接 LivePortrait/ToonCrafter。
+
+### A.6 第三方源码只挂路径，不全量安装 requirements
+
+把第三方源码目录挂到当前 Python 环境：
+
+```bash
+SITE_PACKAGES=$(python - <<'PY'
+import site
+print(site.getsitepackages()[0])
+PY
+)
+
+echo "$HOME/workspace/third_party/TripoSR" > "$SITE_PACKAGES/emosvg_triposr.pth"
+echo "$HOME/workspace/third_party/ToonCrafter" > "$SITE_PACKAGES/emosvg_tooncrafter.pth"
+```
+
+如果你的解压目录带 `-main`，就改成：
+
+```bash
+echo "$HOME/workspace/third_party/TripoSR-main" > "$SITE_PACKAGES/emosvg_triposr.pth"
+echo "$HOME/workspace/third_party/ToonCrafter-main" > "$SITE_PACKAGES/emosvg_tooncrafter.pth"
+```
+
+LivePortrait 官方 zip 常见结构是：
+
+```text
+LivePortrait/src/live_portrait_pipeline.py
+LivePortrait/src/config/inference_config.py
+```
+
+它的源码内部使用相对导入，所以不要直接把 `LivePortrait/src` 当成顶层模块导入。推荐创建一个兼容包壳：
+
+```bash
+mkdir -p ~/workspace/third_party/liveportrait_compat
+cp -a ~/workspace/third_party/LivePortrait/src \
+  ~/workspace/third_party/liveportrait_compat/liveportrait
+touch ~/workspace/third_party/liveportrait_compat/liveportrait/__init__.py
+
+echo "$HOME/workspace/third_party/liveportrait_compat" > "$SITE_PACKAGES/emosvg_liveportrait.pth"
+```
+
+如果目录名是 `LivePortrait-main`：
+
+```bash
+mkdir -p ~/workspace/third_party/liveportrait_compat
+cp -a ~/workspace/third_party/LivePortrait-main/src \
+  ~/workspace/third_party/liveportrait_compat/liveportrait
+touch ~/workspace/third_party/liveportrait_compat/liveportrait/__init__.py
+
+echo "$HOME/workspace/third_party/liveportrait_compat" > "$SITE_PACKAGES/emosvg_liveportrait.pth"
+```
+
+`segment-anything` 通常可以直接安装源码包：
+
+```bash
+pip install ~/workspace/third_party/segment-anything
+```
+
+如果目录是 `segment-anything-main`：
+
+```bash
+pip install ~/workspace/third_party/segment-anything-main
+```
+
+### A.7 验证第三方 import
+
+```bash
+python - <<'PY'
+checks = []
+
+try:
+    import segment_anything
+    checks.append(("segment_anything", "OK"))
+except Exception as e:
+    checks.append(("segment_anything", repr(e)))
+
+try:
+    import tsr
+    checks.append(("TripoSR tsr", "OK"))
+except Exception as e:
+    checks.append(("TripoSR tsr", repr(e)))
+
+try:
+    from liveportrait.live_portrait_pipeline import LivePortraitPipeline
+    checks.append(("LivePortrait", "OK"))
+except Exception as e:
+    checks.append(("LivePortrait", repr(e)))
+
+try:
+    import lvdm
+    checks.append(("ToonCrafter lvdm", "OK"))
+except Exception as e:
+    checks.append(("ToonCrafter lvdm", repr(e)))
+
+for name, result in checks:
+    print(f"{name}: {result}")
+PY
+```
+
+如果某个 import 缺少小包，优先单独安装缺失包，例如：
+
+```bash
+pip install tyro pykalman lmdb ffmpeg-python -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install decord omegaconf pytorch-lightning open_clip_torch timm av moviepy -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+但不要安装会破坏主环境的包。尤其不要让第三方 requirements 改这些核心包：
+
+```text
+torch
+torchvision
+torchaudio
+numpy
+opencv-python
+opencv-contrib-python
+opencv-python-headless
+transformers
+tokenizers
+Pillow
+imageio
+protobuf
+setuptools
+xformers
+gradio
+```
+
+### A.8 如果确实要过滤安装第三方 requirements
+
+只在 import 缺包较多时使用过滤安装。示例：
+
+```bash
+grep -v -E "^(torch|torchvision|torchaudio|numpy|opencv|opencv-python|opencv-contrib-python|opencv-python-headless|transformers|tokenizers|Pillow|imageio|protobuf|setuptools|xformers|gradio)" \
+  ~/workspace/third_party/ToonCrafter/requirements.txt \
+  > /tmp/tooncrafter_req_filtered.txt
+
+pip install -r /tmp/tooncrafter_req_filtered.txt
+```
+
+安装后必须立刻复查核心版本：
+
+```bash
+python - <<'PY'
+import torch, torchvision
+import numpy as np
+import cv2
+print("torch:", torch.__version__)
+print("torchvision:", torchvision.__version__)
+print("cuda:", torch.cuda.is_available(), torch.version.cuda)
+print("numpy:", np.__version__)
+print("cv2:", cv2.__version__)
+PY
+```
+
+如果发现 `torch`、`torchvision`、`numpy`、`cv2` 被改了，立即恢复：
+
+```bash
+pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu121
+pip install "numpy==1.26.4" -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip uninstall opencv-contrib-python opencv-python opencv-python-headless -y
+pip install opencv-python-headless==4.9.0.80 -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+### A.9 推荐长期方案：ToonCrafter 单独环境
+
+ToonCrafter 的依赖最容易污染主环境。如果后续要真实启用 ToonCrafter，推荐单独建环境：
+
+```text
+zmhEmoSVG_clean      # emoSVG 主服务：FastAPI / SAM / TripoSR / LivePortrait
+zmhToonCrafter       # ToonCrafter 官方环境
+```
+
+主服务通过命令行、HTTP 或中间文件调用 ToonCrafter，避免它的 `torch/numpy/transformers/xformers` 版本污染 emoSVG 主环境。
+
+---
+
 ## 0. 推荐服务器配置
 
 | 项目 | 建议 |
@@ -136,6 +462,12 @@ CUDA 11.8 常用：
 pip install torch==2.3.0 torchvision==0.18.0 --index-url https://download.pytorch.org/whl/cu118
 ```
 
+CUDA 13.0 使用
+
+````
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+````
+
 验证：
 
 ```bash
@@ -168,6 +500,39 @@ pip install -e .
 ```bash
 pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
 pip install -e .
+```
+
+13.0
+
+ ````
+ pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
+ pip install -e .
+ ````
+
+建议显式钉住 NumPy 与 OpenCV 版本，避免服务器环境里混入较新的 `opencv-contrib-python` 后触发 NumPy 2.x 兼容问题：
+
+```bash
+pip install "numpy==1.26.4" -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip uninstall opencv-contrib-python opencv-python opencv-python-headless -y
+pip install opencv-python-headless==4.9.0.80 -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+验证版本：
+
+```bash
+python - <<'PY'
+import numpy as np
+import cv2
+print("numpy:", np.__version__)
+print("cv2:", cv2.__version__)
+PY
+```
+
+期望看到：
+
+```text
+numpy: 1.26.4
+cv2: 4.9.0
 ```
 
 基础 import 验证：
@@ -301,19 +666,7 @@ mkdir -p ~/workspace/third_party
 pip install ~/workspace/third_party/segment-anything
 ```
 
-对于 TripoSR、LivePortrait、ToonCrafter，如果它们不是标准 pip 包，先安装各自 requirements：
-
-```bash
-pip install -r ~/workspace/third_party/TripoSR/requirements.txt
-pip install -r ~/workspace/third_party/LivePortrait/requirements.txt
-pip install -r ~/workspace/third_party/ToonCrafter/requirements.txt
-```
-
-如果某些依赖如 `gradio` 与服务器环境冲突，可以先跳过 demo 依赖，只装推理依赖。例如：
-
-```bash
-grep -v "gradio" ~/workspace/third_party/TripoSR/requirements.txt | pip install -r /dev/stdin
-```
+不要直接全量安装 TripoSR、LivePortrait、ToonCrafter 的 requirements；这些研究项目常会改掉 `torch`、`numpy`、`opencv`、`transformers` 等主环境核心依赖。优先只挂源码路径，缺什么小包再单独补。
 
 把源码路径写入当前 Python 环境的 `site-packages`：
 
@@ -325,8 +678,19 @@ PY
 )
 
 echo "$HOME/workspace/third_party/TripoSR" > "$SITE_PACKAGES/emosvg_triposr.pth"
-echo "$HOME/workspace/third_party/LivePortrait/src" > "$SITE_PACKAGES/emosvg_liveportrait.pth"
 echo "$HOME/workspace/third_party/ToonCrafter" > "$SITE_PACKAGES/emosvg_tooncrafter.pth"
+```
+
+LivePortrait 官方源码需要兼容包壳：
+
+```bash
+mkdir -p ~/workspace/third_party/liveportrait_compat
+cp -a ~/workspace/third_party/LivePortrait/src \
+  ~/workspace/third_party/liveportrait_compat/liveportrait
+touch ~/workspace/third_party/liveportrait_compat/liveportrait/__init__.py
+
+echo "$HOME/workspace/third_party/liveportrait_compat" > "$SITE_PACKAGES/emosvg_liveportrait.pth"
+pip install tyro pykalman lmdb ffmpeg-python -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 再次验证 import：
@@ -747,7 +1111,7 @@ PY
 
 ### 14.4 `No module named liveportrait`
 
-确认 `.pth` 指向的是 LivePortrait 的 `src` 目录：
+LivePortrait 官方 zip 常见结构是 `LivePortrait/src/live_portrait_pipeline.py`，内部使用相对导入。不要直接把 `.pth` 指向 `LivePortrait/src`，推荐确认 `.pth` 指向兼容包壳的上一级目录：
 
 ```bash
 cat $(python - <<'PY'
@@ -760,7 +1124,22 @@ PY
 期望类似：
 
 ```text
-/data3/你的用户名/workspace/third_party/LivePortrait/src
+/data3/你的用户名/workspace/third_party/liveportrait_compat
+```
+
+如果还没有创建兼容包壳：
+
+```bash
+mkdir -p ~/workspace/third_party/liveportrait_compat
+cp -a ~/workspace/third_party/LivePortrait/src \
+  ~/workspace/third_party/liveportrait_compat/liveportrait
+touch ~/workspace/third_party/liveportrait_compat/liveportrait/__init__.py
+```
+
+如果随后报 `No module named 'tyro'`，补小依赖：
+
+```bash
+pip install tyro pykalman lmdb ffmpeg-python -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 ### 14.5 ToonCrafter 可以 `import lvdm`，但 emoSVG 仍报错
@@ -828,6 +1207,79 @@ ssh -L 8010:127.0.0.1:8010 user@server
 /data3/你的用户名/emosvg_models/
 /data3/你的用户名/emosvg_outputs/
 ```
+
+### 14.10 NumPy 2.x 与 OpenCV/3D 依赖兼容问题
+
+如果 `python scripts/smoke_test.py` 在 `Full pipeline (3D+SVG)` 阶段报错：
+
+```text
+`ptp` was removed from the ndarray class in NumPy 2.0.
+```
+
+说明当前环境里有依赖尚未适配 NumPy 2.x。对本项目这类视觉、3D、几何 pipeline，更推荐使用 NumPy 1.26 系列：
+
+```bash
+pip install "numpy==1.26.4" -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+如果降级 NumPy 时看到类似提示：
+
+```text
+opencv-contrib-python 4.13.0.92 requires numpy>=2
+```
+
+说明环境里混入了不属于本项目 requirements 的新版 OpenCV contrib 包。建议清理 OpenCV 混装，并安装项目指定版本：
+
+```bash
+pip uninstall opencv-contrib-python opencv-python opencv-python-headless -y
+pip install opencv-python-headless==4.9.0.80 -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+验证：
+
+```bash
+python - <<'PY'
+import numpy as np
+import cv2
+print("numpy:", np.__version__)
+print("cv2:", cv2.__version__)
+PY
+```
+
+期望：
+
+```text
+numpy: 1.26.4
+cv2: 4.9.0
+```
+
+### 14.11 TripoSR `has_vertex_color` 签名兼容问题
+
+如果 smoke test 或 `/reconstruct` 报错：
+
+```text
+TripoSR inference failed: TSR.extract_mesh() missing 1 required positional argument: 'has_vertex_color'
+```
+
+说明当前安装的 TripoSR 上游版本要求：
+
+```python
+extract_mesh(..., has_vertex_color=False)
+```
+
+而旧版 emoSVG wrapper 只传了 `resolution`。新版 wrapper 已经兼容新旧两种签名。遇到该错误时，先更新：
+
+```text
+src/modules/reconstructor_3d/reconstructor.py
+```
+
+然后重跑：
+
+```bash
+python scripts/smoke_test.py
+```
+
+这不是权重下载问题，也不是环境依赖问题。
 
 ---
 

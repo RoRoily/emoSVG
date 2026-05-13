@@ -152,10 +152,38 @@ class Reconstructor3D:
             try:
                 with torch.no_grad():
                     scene_codes = model([image_np], device=self._registry.device_manager.device)
-                    meshes = model.extract_mesh(scene_codes, resolution=mc_resolution)
+                    meshes = self._extract_mesh_compat(model, scene_codes, mc_resolution)
                 return meshes[0]
             except Exception as exc:
                 raise ReconstructionError(f"TripoSR inference failed: {exc}") from exc
+
+    @staticmethod
+    def _extract_mesh_compat(model, scene_codes, resolution: int):
+        """Call TripoSR extract_mesh across upstream API variants."""
+        import inspect
+
+        try:
+            signature = inspect.signature(model.extract_mesh)
+            if "has_vertex_color" in signature.parameters:
+                return model.extract_mesh(
+                    scene_codes,
+                    resolution=resolution,
+                    has_vertex_color=False,
+                )
+        except (TypeError, ValueError):
+            # Some wrapped callables do not expose an inspectable signature.
+            pass
+
+        try:
+            return model.extract_mesh(scene_codes, resolution=resolution)
+        except TypeError as exc:
+            if "has_vertex_color" not in str(exc):
+                raise
+            return model.extract_mesh(
+                scene_codes,
+                resolution=resolution,
+                has_vertex_color=False,
+            )
 
     @staticmethod
     def _load_image(
