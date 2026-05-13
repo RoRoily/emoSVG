@@ -132,6 +132,8 @@ def install_git_packages() -> None:
     import subprocess
     import tempfile
     import shutil
+    import urllib.request
+    import zipfile
 
     _use_ssh = os.getenv("GITHUB_SSH", "1") == "1"
     packages = [
@@ -142,30 +144,50 @@ def install_git_packages() -> None:
     ]
 
     for name, repo in packages:
-        if _use_ssh:
-            repo_url = f"git@github.com:{repo}.git"
-        else:
-            _mirror = os.getenv("GITHUB_MIRROR", "https://github.com")
-            repo_url = f"{_mirror}/{repo}.git"
         tmpdir = Path(tempfile.mkdtemp(prefix=f"emosvg_{name}_"))
         try:
-            logger.info("Cloning %s into %s ...", name, tmpdir)
-            clone = subprocess.run(
-                ["git", "clone", "--depth=1", repo_url, str(tmpdir)],
-                capture_output=True, text=True,
-            )
-            if clone.returncode != 0:
-                logger.warning("%s clone failed:\n%s", name, clone.stderr)
-                continue
-            logger.info("Installing %s from local clone...", name)
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", str(tmpdir)],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                logger.info("%s installed OK", name)
-            else:
-                logger.warning("%s install failed:\n%s", name, result.stderr)
+            cloned = False
+            # Try zip download first (faster, no LFS overhead)
+            zip_url = f"https://github.com/{repo}/archive/refs/heads/main.zip"
+            zip_path = tmpdir / "repo.zip"
+            extract_dir = tmpdir / "extracted"
+            try:
+                logger.info("Downloading %s as zip...", name)
+                urllib.request.urlretrieve(zip_url, str(zip_path))
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(str(extract_dir))
+                # extracted folder is named <repo>-main or <repo>-master
+                subdirs = list(extract_dir.iterdir())
+                src_dir = subdirs[0] if subdirs else extract_dir
+                cloned = True
+                logger.info("Downloaded %s via zip", name)
+            except Exception as zip_exc:
+                logger.warning("Zip download failed for %s (%s), falling back to git clone", name, zip_exc)
+                src_dir = tmpdir / "repo"
+                if _use_ssh:
+                    repo_url = f"git@github.com:{repo}.git"
+                else:
+                    mirror = os.getenv("GITHUB_MIRROR", "https://github.com")
+                    repo_url = f"{mirror}/{repo}.git"
+                clone = subprocess.run(
+                    ["git", "clone", "--depth=1", "--filter=blob:none", repo_url, str(src_dir)],
+                    capture_output=True, text=True,
+                )
+                if clone.returncode != 0:
+                    logger.warning("%s clone failed:\n%s", name, clone.stderr)
+                    continue
+                cloned = True
+
+            if cloned:
+                logger.info("Installing %s...", name)
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", str(src_dir)],
+                    capture_output=True, text=True,
+                )
+                if result.returncode == 0:
+                    logger.info("%s installed OK", name)
+                else:
+                    logger.warning("%s install failed:\n%s", name, result.stderr)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 

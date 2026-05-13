@@ -159,6 +159,26 @@ class TestMeshExporter:
         assert "my_character" in paths["obj"].name
 
 
+# ── TripoSR API compatibility ─────────────────────────────────────────────
+
+class TestTripoSRCompatibility:
+    def test_extract_mesh_old_signature(self):
+        class OldTripoSR:
+            def extract_mesh(self, scene_codes, resolution):
+                return [("old", scene_codes, resolution)]
+
+        result = Reconstructor3D._extract_mesh_compat(OldTripoSR(), "codes", 128)
+        assert result == [("old", "codes", 128)]
+
+    def test_extract_mesh_new_has_vertex_color_signature(self):
+        class NewTripoSR:
+            def extract_mesh(self, scene_codes, resolution, has_vertex_color):
+                return [("new", scene_codes, resolution, has_vertex_color)]
+
+        result = Reconstructor3D._extract_mesh_compat(NewTripoSR(), "codes", 256)
+        assert result == [("new", "codes", 256, False)]
+
+
 # ── Reconstructor3D end-to-end (fallback mode) ────────────────────────────
 
 class TestReconstructor3DE2E:
