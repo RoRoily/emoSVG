@@ -1320,6 +1320,38 @@ TRIPOSR_MODEL_PATH=/data3/zhengmuhan/workspace/emosvg_models/triposr
 
 ---
 
+### 14.12 TripoSR `expected scalar type Half but found Float`
+
+如果 smoke test 已经能加载本地 TripoSR 权重，但报错：
+
+```text
+TripoSR inference failed: expected scalar type Half but found Float
+```
+
+这说明 TripoSR 已进入真实推理阶段，问题不再是下载或路径，而是 dtype 不一致：全局配置里的 `TORCH_DTYPE=float16` 会把模型移到 half，但 TripoSR 上游预处理路径仍会生成 float32 输入。新版 emoSVG wrapper 默认会让 TripoSR 保持 float32，这在 24 GB 4090 上更稳。
+
+先同步新版：
+
+```text
+src/modules/reconstructor_3d/reconstructor.py
+```
+
+然后在 `.env` 中可以显式加入：
+
+```bash
+TRIPOSR_FORCE_FLOAT32=1
+```
+
+`1` 是新版默认值。除非你确认当前 TripoSR 源码和输入预处理都支持 half 推理，否则不要设成 `0`。
+
+再次运行：
+
+```bash
+python scripts/smoke_test.py
+```
+
+---
+
 ## 15. 推荐验收清单
 
 按顺序勾选：

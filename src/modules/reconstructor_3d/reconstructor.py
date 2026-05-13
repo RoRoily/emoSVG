@@ -185,12 +185,34 @@ class Reconstructor3D:
         import torch
         with self._registry.model_context(self.MODEL_ID, offload_after=True) as model:
             try:
+                self._prepare_model_for_inference(model)
                 with torch.no_grad():
                     scene_codes = model([image_np], device=self._registry.device_manager.device)
                     meshes = self._extract_mesh_compat(model, scene_codes, mc_resolution)
                 return meshes[0]
             except Exception as exc:
                 raise ReconstructionError(f"TripoSR inference failed: {exc}") from exc
+
+    def _prepare_model_for_inference(self, model) -> None:
+        """
+        Keep TripoSR in float32 by default.
+
+        The upstream TripoSR preprocessing path converts input images to float32
+        tensors internally. If the global DeviceManager has moved the model to
+        float16, inference can fail with "expected scalar type Half but found
+        Float". TripoSR is relatively small for a 24 GB GPU, so float32 is the
+        safer default. Set TRIPOSR_FORCE_FLOAT32=0 to opt out.
+        """
+        import torch
+
+        if os.getenv("TRIPOSR_FORCE_FLOAT32", "1").lower() in {"0", "false", "no"}:
+            return
+        if not hasattr(model, "to"):
+            return
+        try:
+            model.to(device=self._registry.device_manager.device, dtype=torch.float32)
+        except TypeError:
+            model.to(self._registry.device_manager.device)
 
     @staticmethod
     def _extract_mesh_compat(model, scene_codes, resolution: int):

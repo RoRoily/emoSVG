@@ -162,6 +162,41 @@ class TestMeshExporter:
 # ── TripoSR API compatibility ─────────────────────────────────────────────
 
 class TestTripoSRCompatibility:
+    def test_prepare_model_for_inference_forces_float32(self, tmp_path, monkeypatch):
+        import torch
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = []
+
+            def to(self, **kwargs):
+                self.calls.append(kwargs)
+                return self
+
+        monkeypatch.delenv("TRIPOSR_FORCE_FLOAT32", raising=False)
+        rec = Reconstructor3D(model_id="custom/model", output_dir=tmp_path)
+        model = FakeModel()
+        rec._prepare_model_for_inference(model)
+
+        assert model.calls
+        assert model.calls[-1]["dtype"] is torch.float32
+
+    def test_prepare_model_for_inference_can_opt_out(self, tmp_path, monkeypatch):
+        class FakeModel:
+            def __init__(self):
+                self.calls = []
+
+            def to(self, **kwargs):
+                self.calls.append(kwargs)
+                return self
+
+        monkeypatch.setenv("TRIPOSR_FORCE_FLOAT32", "0")
+        rec = Reconstructor3D(model_id="custom/model", output_dir=tmp_path)
+        model = FakeModel()
+        rec._prepare_model_for_inference(model)
+
+        assert model.calls == []
+
     def test_resolve_model_prefers_local_models_root(self, tmp_path, monkeypatch):
         triposr = tmp_path / "models" / "triposr"
         triposr.mkdir(parents=True)
