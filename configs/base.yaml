@@ -7,8 +7,8 @@ vram:
   safety_margin_gb: 0.5  # 预留给 CUDA 运行时的缓冲
   offload_target: "cpu"  # offload 目标：cpu | disk
 
-models_root: "./models"
-output_root: "./outputs"
+models_root: "${MODELS_ROOT:-./models}"
+output_root: "${OUTPUT_ROOT:-./outputs}"
 
 logging:
   level: "INFO"

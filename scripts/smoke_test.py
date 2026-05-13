@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import time
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -39,6 +40,27 @@ def _make_mock_clip():
     return (proc, model)
 
 
+def _models_root() -> Path | None:
+    raw = os.getenv("MODELS_ROOT")
+    return Path(raw).expanduser() if raw else None
+
+
+def _model_dir(env_name: str, subdir: str) -> Path | None:
+    raw = os.getenv(env_name)
+    if raw:
+        return Path(raw).expanduser()
+    root = _models_root()
+    return root / subdir if root else None
+
+
+def _sam_checkpoint() -> Path | None:
+    raw = os.getenv("SAM_MODEL_PATH")
+    if raw:
+        return Path(raw).expanduser()
+    root = _models_root()
+    return root / "sam" / "sam_vit_h_4b8939.pth" if root else None
+
+
 def main() -> None:
     print("=" * 60)
     print("emoSVG Smoke Test")
@@ -58,7 +80,12 @@ def main() -> None:
 
         # Build pipeline
         ModelRegistry.reset()
-        pipeline = FullPipeline(output_root=tmp)
+        pipeline = FullPipeline(
+            output_root=tmp,
+            live_portrait_path=_model_dir("LIVE_PORTRAIT_MODEL_PATH", "live_portrait"),
+            toon_crafter_path=_model_dir("TOON_CRAFTER_MODEL_PATH", "toon_crafter"),
+            sam_checkpoint=_sam_checkpoint(),
+        )
 
         # Inject mock CLIP
         bundle = _make_mock_clip()

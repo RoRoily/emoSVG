@@ -19,12 +19,52 @@ import argparse
 import logging
 import os
 import sys
+import time
 from pathlib import Path
+from urllib.error import URLError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 MODELS_ROOT = Path(os.getenv("MODELS_ROOT", "./models"))
+
+
+def _download_file_with_resume(url: str, dest: Path, retries: int = 8) -> None:
+    """Download a large file with basic retry and HTTP Range resume support."""
+    import shutil
+    import urllib.request
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_suffix(dest.suffix + ".part")
+
+    for attempt in range(1, retries + 1):
+        existing = part.stat().st_size if part.exists() else 0
+        headers = {"Range": f"bytes={existing}-"} if existing else {}
+        req = urllib.request.Request(url, headers=headers)
+        mode = "ab" if existing else "wb"
+        try:
+            logger.info(
+                "Downloading %s -> %s%s",
+                url,
+                dest,
+                f" (resume from {existing / 1024 ** 2:.1f} MB)" if existing else "",
+            )
+            with urllib.request.urlopen(req, timeout=60) as response, part.open(mode) as fh:
+                shutil.copyfileobj(response, fh, length=1024 * 1024)
+            part.replace(dest)
+            return
+        except Exception as exc:
+            if attempt >= retries:
+                raise
+            wait = min(60, attempt * 5)
+            logger.warning(
+                "Download interrupted (%s). Retry %d/%d after %ds.",
+                exc,
+                attempt,
+                retries,
+                wait,
+            )
+            time.sleep(wait)
 
 
 def download_ip_adapter() -> None:
@@ -66,6 +106,37 @@ def download_sam() -> None:
     logger.info("Downloading from %s ...", url)
     urllib.request.urlretrieve(url, str(dest))
     logger.info("SAM downloaded to %s", dest)
+
+
+def download_sam() -> None:
+    logger.info("Downloading SAM ViT-H checkpoint (~2.4 GB)...")
+    url = os.getenv(
+        "SAM_DOWNLOAD_URL",
+        "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+    )
+    dest = MODELS_ROOT / "sam" / "sam_vit_h_4b8939.pth"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        logger.info("SAM checkpoint already exists at %s - skipping.", dest)
+        return
+    try:
+        _download_file_with_resume(url, dest)
+        logger.info("SAM downloaded to %s", dest)
+    except (URLError, OSError, TimeoutError) as exc:
+        logger.error("SAM download failed: %s", exc)
+        logger.error(
+            "Manual alternative:\n"
+            "  mkdir -p %s\n"
+            "  cd %s\n"
+            "  wget -c %s\n"
+            "or:\n"
+            "  curl -L --retry 20 --retry-delay 5 -C - -o %s %s",
+            dest.parent,
+            dest.parent,
+            url,
+            dest,
+            url,
+        )
 
 
 def download_live_portrait() -> None:

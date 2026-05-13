@@ -160,11 +160,14 @@ cp .env.example .env
 
 ```bash
 MODELS_ROOT=/data3/zhengmuhan/workspace/emosvg_models
+LIVE_PORTRAIT_MODEL_PATH=/data3/zhengmuhan/workspace/emosvg_models/live_portrait
 TRIPOSR_MODEL_PATH=/data3/zhengmuhan/workspace/emosvg_models/triposr
+TOON_CRAFTER_MODEL_PATH=/data3/zhengmuhan/workspace/emosvg_models/toon_crafter
+SAM_MODEL_PATH=/data3/zhengmuhan/workspace/emosvg_models/sam/sam_vit_h_4b8939.pth
 OUTPUT_ROOT=/data3/zhengmuhan/workspace/emosvg_outputs
 ```
 
-新版 `scripts/smoke_test.py` 会自动读取项目根目录 `.env`。如果 `TRIPOSR_MODEL_PATH` 或 `MODELS_ROOT/triposr` 里存在 `config.yaml` 和 `model.ckpt`，TripoSR 会优先使用本地权重，不再去 HuggingFace Hub 查找。
+新版 `scripts/smoke_test.py` 会自动读取项目根目录 `.env`。如果 `LIVE_PORTRAIT_MODEL_PATH`、`TOON_CRAFTER_MODEL_PATH`、`SAM_MODEL_PATH`、`TRIPOSR_MODEL_PATH` 指向真实权重，smoke test 会优先尝试真实后端；缺失的模块会继续走 fallback。
 
 然后跑项目自带 smoke test：
 
@@ -807,6 +810,24 @@ python scripts/download_models.py --models sam
 $MODELS_ROOT/sam/sam_vit_h_4b8939.pth
 ```
 
+如果遇到 SSL EOF、连接中断或长时间无速度，不要反复从头下载，改用断点续传：
+
+```bash
+mkdir -p "$MODELS_ROOT/sam"
+cd "$MODELS_ROOT/sam"
+wget -c https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+```
+
+如果服务器没有 `wget`，用 `curl`：
+
+```bash
+curl -L --retry 20 --retry-delay 5 -C - \
+  -o "$SAM_MODEL_PATH" \
+  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+```
+
+新版 `scripts/download_models.py --models sam` 也支持断点续传，并支持通过 `SAM_DOWNLOAD_URL` 指定镜像 URL。
+
 ### 9.2 下载 TripoSR
 
 ```bash
@@ -824,6 +845,16 @@ $MODELS_ROOT/triposr/model.ckpt
 
 ```bash
 python scripts/download_models.py --models live_portrait
+```
+
+如果 HuggingFace 直连失败，优先试镜像端点：
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+huggingface-cli download KwaiVGI/LivePortrait \
+  --repo-type model \
+  --local-dir "$LIVE_PORTRAIT_MODEL_PATH" \
+  --resume-download
 ```
 
 期望文件：
@@ -1296,6 +1327,16 @@ python scripts/smoke_test.py
 ```
 
 这不是权重下载问题，也不是环境依赖问题。
+
+如果开头显示：
+
+```text
+LivePortrait weights not found at 'None'
+ToonCrafter weights not found at 'None'
+SAM weights not found
+```
+
+说明 smoke test 没有拿到这些模块的权重路径。请同步新版 `scripts/smoke_test.py` 和 `configs/base.yaml`，并检查 `.env` 里的 `LIVE_PORTRAIT_MODEL_PATH`、`TOON_CRAFTER_MODEL_PATH`、`SAM_MODEL_PATH`。
 
 如果报错：
 
