@@ -147,6 +147,22 @@ cv2: 4.9.0
 
 ## 5. 先跑 fallback smoke test
 
+建议先配置 `.env`，让 smoke test 能找到本地模型目录：
+
+```bash
+cp .env.example .env
+```
+
+至少确认：
+
+```bash
+MODELS_ROOT=/data3/zhengmuhan/workspace/emosvg_models
+TRIPOSR_MODEL_PATH=/data3/zhengmuhan/workspace/emosvg_models/triposr
+OUTPUT_ROOT=/data3/zhengmuhan/workspace/emosvg_outputs
+```
+
+新版 `scripts/smoke_test.py` 会自动读取项目根目录 `.env`。如果 `TRIPOSR_MODEL_PATH` 或 `MODELS_ROOT/triposr` 里存在 `config.yaml` 和 `model.ckpt`，TripoSR 会优先使用本地权重，不再去 HuggingFace Hub 查找。
+
 ```bash
 python scripts/smoke_test.py
 ```
@@ -378,6 +394,27 @@ python scripts/smoke_test.py
 ```
 
 这不是权重下载问题，也不是环境依赖问题。
+
+如果报错：
+
+```text
+Failed to load TripoSR from 'stabilityai/TripoSR': An error happened while trying to locate the file on the Hub
+```
+
+说明程序仍在使用 HuggingFace ID，而没有找到本地权重。检查：
+
+```bash
+ls -lh /data3/zhengmuhan/workspace/emosvg_models/triposr/config.yaml
+ls -lh /data3/zhengmuhan/workspace/emosvg_models/triposr/model.ckpt
+cat .env | grep -E "MODELS_ROOT|TRIPOSR_MODEL_PATH"
+```
+
+确保 `.env` 包含：
+
+```bash
+MODELS_ROOT=/data3/zhengmuhan/workspace/emosvg_models
+TRIPOSR_MODEL_PATH=/data3/zhengmuhan/workspace/emosvg_models/triposr
+```
 
 ---
 

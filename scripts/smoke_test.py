@@ -16,9 +16,11 @@ from unittest.mock import MagicMock
 import cv2
 import numpy as np
 import torch
+from dotenv import load_dotenv
 
 # Ensure project root is on sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from src.core.model_registry import ModelRegistry, ModelState
 from src.modules.ip_extractor.extractor import IPExtractor

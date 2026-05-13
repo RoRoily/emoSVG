@@ -162,6 +162,22 @@ class TestMeshExporter:
 # ── TripoSR API compatibility ─────────────────────────────────────────────
 
 class TestTripoSRCompatibility:
+    def test_resolve_model_prefers_local_models_root(self, tmp_path, monkeypatch):
+        triposr = tmp_path / "models" / "triposr"
+        triposr.mkdir(parents=True)
+        (triposr / "config.yaml").write_text("model: test", encoding="utf-8")
+        (triposr / "model.ckpt").write_bytes(b"fake")
+
+        monkeypatch.setenv("MODELS_ROOT", str(tmp_path / "models"))
+        resolved = Reconstructor3D._resolve_model_id_or_path("stabilityai/TripoSR")
+        assert resolved == str(triposr)
+
+    def test_resolve_model_keeps_hf_id_without_local_weights(self, monkeypatch):
+        monkeypatch.delenv("MODELS_ROOT", raising=False)
+        monkeypatch.delenv("TRIPOSR_MODEL_PATH", raising=False)
+        resolved = Reconstructor3D._resolve_model_id_or_path("stabilityai/TripoSR")
+        assert resolved == "stabilityai/TripoSR"
+
     def test_extract_mesh_old_signature(self):
         class OldTripoSR:
             def extract_mesh(self, scene_codes, resolution):

@@ -8,6 +8,7 @@ without GPU or model downloads.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,8 @@ from .schemas import ReconstructionRequest, ReconstructionResult
 logger = logging.getLogger(__name__)
 
 _TRIPOSR_VRAM_GB = 6.0
+_DEFAULT_TRIPOSR_MODEL_ID = "stabilityai/TripoSR"
+_TRIPOSR_REQUIRED_FILES = ("config.yaml", "model.ckpt")
 
 
 class Reconstructor3D:
@@ -39,11 +42,11 @@ class Reconstructor3D:
 
     def __init__(
         self,
-        model_id: str = "stabilityai/TripoSR",
+        model_id: str = _DEFAULT_TRIPOSR_MODEL_ID,
         output_dir: Path = Path("outputs/meshes"),
         registry: ModelRegistry | None = None,
     ) -> None:
-        self._model_id_or_path = model_id
+        self._model_id_or_path = self._resolve_model_id_or_path(model_id)
         self._output_dir = output_dir
         self._registry = registry or ModelRegistry.instance()
         self._processor = MeshProcessor()
@@ -110,7 +113,7 @@ class Reconstructor3D:
         from src.core import load_config
         cfg = load_config(config_path)
         return cls(
-            model_id=cfg.get("triposr", {}).get("model_id", "stabilityai/TripoSR"),
+            model_id=cfg.get("triposr", {}).get("model_id", _DEFAULT_TRIPOSR_MODEL_ID),
             output_dir=Path(cfg.get("export", {}).get("output_dir", "outputs/meshes")),
             registry=registry,
         )
@@ -123,6 +126,38 @@ class Reconstructor3D:
             return True
         except ImportError:
             return False
+
+    @staticmethod
+    def _has_triposr_weights(path: Path) -> bool:
+        return all((path / name).exists() for name in _TRIPOSR_REQUIRED_FILES)
+
+    @classmethod
+    def _resolve_model_id_or_path(cls, model_id: str) -> str:
+        """Prefer local TripoSR weights when env/config paths are available."""
+        explicit = Path(model_id).expanduser()
+        if explicit.exists():
+            return str(explicit)
+
+        if model_id != _DEFAULT_TRIPOSR_MODEL_ID:
+            return model_id
+
+        candidates: list[Path] = []
+        triposr_env = os.getenv("TRIPOSR_MODEL_PATH")
+        if triposr_env:
+            candidates.append(Path(triposr_env).expanduser())
+
+        models_root = os.getenv("MODELS_ROOT")
+        if models_root:
+            candidates.append(Path(models_root).expanduser() / "triposr")
+
+        candidates.append(Path("models") / "triposr")
+
+        for candidate in candidates:
+            if cls._has_triposr_weights(candidate):
+                logger.info("Using local TripoSR weights from %s", candidate)
+                return str(candidate)
+
+        return model_id
 
     def _register_model(self) -> None:
         model_id = self._model_id_or_path
