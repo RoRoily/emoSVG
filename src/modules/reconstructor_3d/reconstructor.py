@@ -164,12 +164,7 @@ class Reconstructor3D:
 
         def _loader():
             try:
-                from tsr.system import TSR  # type: ignore
-                model = TSR.from_pretrained(
-                    model_id,
-                    config_name="config.yaml",
-                    weight_name="model.ckpt",
-                )
+                model = self._load_triposr_model(model_id)
                 model.renderer.set_chunk_size(8192)
                 return model
             except Exception as exc:
@@ -179,6 +174,36 @@ class Reconstructor3D:
 
         self._registry.register(
             self.MODEL_ID, _loader, estimated_vram_gb=_TRIPOSR_VRAM_GB
+        )
+
+    @classmethod
+    def _load_triposr_model(cls, model_id_or_path: str):
+        """
+        Load TripoSR from a local checkpoint directory or HuggingFace model id.
+
+        Some TripoSR forks expose ``TSR.from_pretrained`` but still route local
+        paths through ``hf_hub_download``. For local directories we therefore
+        load ``config.yaml`` and ``model.ckpt`` directly, matching upstream
+        ``from_pretrained`` semantics without touching the network.
+        """
+        from tsr.system import TSR  # type: ignore
+
+        local_path = Path(model_id_or_path).expanduser()
+        if cls._has_triposr_weights(local_path):
+            import torch
+            from omegaconf import OmegaConf
+
+            cfg = OmegaConf.load(local_path / "config.yaml")
+            OmegaConf.resolve(cfg)
+            model = TSR(cfg)
+            ckpt = torch.load(local_path / "model.ckpt", map_location="cpu")
+            model.load_state_dict(ckpt)
+            return model
+
+        return TSR.from_pretrained(
+            model_id_or_path,
+            config_name="config.yaml",
+            weight_name="model.ckpt",
         )
 
     def _triposr_infer(self, image_np: np.ndarray, mc_resolution: int):

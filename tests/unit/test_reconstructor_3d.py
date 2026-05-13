@@ -213,6 +213,51 @@ class TestTripoSRCompatibility:
         resolved = Reconstructor3D._resolve_model_id_or_path("stabilityai/TripoSR")
         assert resolved == "stabilityai/TripoSR"
 
+    def test_load_triposr_model_uses_local_files_without_hub(self, tmp_path, monkeypatch):
+        import sys
+        import types
+        import torch
+
+        triposr = tmp_path / "triposr"
+        triposr.mkdir()
+        (triposr / "config.yaml").write_text("model: test", encoding="utf-8")
+        torch.save({"weight": torch.tensor([1.0])}, triposr / "model.ckpt")
+
+        class FakeOmegaConf:
+            @staticmethod
+            def load(path):
+                return {"loaded_from": str(path)}
+
+            @staticmethod
+            def resolve(cfg):
+                cfg["resolved"] = True
+
+        class FakeTSR:
+            from_pretrained_called = False
+
+            def __init__(self, cfg):
+                self.cfg = cfg
+                self.state = None
+
+            def load_state_dict(self, state):
+                self.state = state
+
+            @classmethod
+            def from_pretrained(cls, *args, **kwargs):
+                cls.from_pretrained_called = True
+                raise AssertionError("local load should not call from_pretrained")
+
+        monkeypatch.setitem(sys.modules, "omegaconf", types.SimpleNamespace(OmegaConf=FakeOmegaConf))
+        monkeypatch.setitem(sys.modules, "tsr", types.SimpleNamespace())
+        monkeypatch.setitem(sys.modules, "tsr.system", types.SimpleNamespace(TSR=FakeTSR))
+
+        model = Reconstructor3D._load_triposr_model(str(triposr))
+
+        assert isinstance(model, FakeTSR)
+        assert model.cfg["resolved"] is True
+        assert torch.equal(model.state["weight"], torch.tensor([1.0]))
+        assert FakeTSR.from_pretrained_called is False
+
     def test_extract_mesh_old_signature(self):
         class OldTripoSR:
             def extract_mesh(self, scene_codes, resolution):
