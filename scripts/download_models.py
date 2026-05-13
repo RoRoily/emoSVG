@@ -9,7 +9,7 @@ Models downloaded:
     triposr       — stabilityai/TripoSR via HuggingFace Hub
     sam           — SAM ViT-H checkpoint (~2.4 GB)
     live_portrait — KwaiVGI/LivePortrait via HuggingFace Hub
-    toon_crafter  — ToonCrafter checkpoint from HuggingFace Hub (~8 GB)
+    toon_crafter  — ToonCrafter checkpoint from HuggingFace Hub (~10.5 GB)
 
 Note: live_portrait requires the liveportrait package to be installed first.
 """
@@ -65,6 +65,33 @@ def _download_file_with_resume(url: str, dest: Path, retries: int = 8) -> None:
                 wait,
             )
             time.sleep(wait)
+
+
+def _copy_if_newer(src: Path, dest: Path) -> None:
+    """Copy a small metadata/config file if it is missing or stale."""
+    import shutil
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and dest.stat().st_mtime >= src.stat().st_mtime:
+        return
+    shutil.copy2(src, dest)
+
+
+def _ensure_symlink(src: Path, dest: Path) -> None:
+    """Create a convenience symlink when possible without duplicating huge files."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        return
+    try:
+        dest.symlink_to(src)
+        logger.info("Linked %s -> %s", dest, src)
+    except OSError as exc:
+        logger.warning(
+            "Could not create symlink %s -> %s (%s). This is optional.",
+            dest,
+            src,
+            exc,
+        )
 
 
 def download_ip_adapter() -> None:
@@ -251,35 +278,103 @@ def install_git_packages() -> None:
 
 def download_toon_crafter() -> None:
     """
-    Download ToonCrafter checkpoint from HuggingFace Hub.
+    Download ToonCrafter checkpoint and inference config.
 
     Layout after download:
         models/toon_crafter/
-          model.ckpt    (~8 GB)
-          config.yaml
+          model.ckpt                         (~10.5 GB)
+          config.yaml                        (copy of inference_512_v1.0.yaml)
+          configs/inference_512_v1.0.yaml    (official config layout)
+          checkpoints/tooncrafter_512_interp_v1/model.ckpt -> ../../model.ckpt
     """
-    dest = MODELS_ROOT / "toon_crafter"
+    dest = Path(os.getenv("TOON_CRAFTER_MODEL_PATH", str(MODELS_ROOT / "toon_crafter")))
     logger.info("Downloading ToonCrafter weights to %s ...", dest)
+
+    model_repo = os.getenv("TOON_CRAFTER_REPO_ID", "Doubiiu/ToonCrafter")
+    model_file = os.getenv("TOON_CRAFTER_MODEL_FILE", "model.ckpt")
+    config_repo = os.getenv("TOON_CRAFTER_CONFIG_REPO_ID", "Doubiiu/tooncrafter")
+    config_file = os.getenv("TOON_CRAFTER_CONFIG_FILE", "configs/inference_512_v1.0.yaml")
+    config_url = os.getenv("TOON_CRAFTER_CONFIG_URL")
+
     try:
         from huggingface_hub import hf_hub_download
+
         dest.mkdir(parents=True, exist_ok=True)
-        for filename in ["model.ckpt", "config.yaml"]:
-            out = dest / filename
-            if out.exists():
-                logger.info("%s already exists — skipping.", out)
-                continue
+
+        ckpt = dest / "model.ckpt"
+        if ckpt.exists():
+            logger.info("%s already exists — skipping.", ckpt)
+        else:
             hf_hub_download(
-                repo_id="Doubiiu/ToonCrafter",
-                filename=filename,
+                repo_id=model_repo,
+                repo_type="model",
+                filename=model_file,
                 local_dir=str(dest),
             )
-            logger.info("Downloaded %s", out)
-        logger.info("ToonCrafter weights downloaded to %s", dest)
+            downloaded_ckpt = dest / model_file
+            if downloaded_ckpt.exists() and downloaded_ckpt != ckpt:
+                downloaded_ckpt.replace(ckpt)
+            logger.info("Downloaded %s", ckpt)
+
+        config_dest = dest / "config.yaml"
+        official_config_dest = dest / config_file
+        if config_dest.exists():
+            logger.info("%s already exists — skipping.", config_dest)
+        elif config_url:
+            _download_file_with_resume(config_url, config_dest)
+            logger.info("Downloaded %s from %s", config_dest, config_url)
+        else:
+            try:
+                downloaded_config = Path(
+                    hf_hub_download(
+                        repo_id=config_repo,
+                        repo_type="space",
+                        filename=config_file,
+                        local_dir=str(dest / "_space"),
+                    )
+                )
+            except Exception as space_exc:
+                logger.warning(
+                    "Failed to fetch ToonCrafter config from HF Space %s (%s). "
+                    "Falling back to GitHub raw URL.",
+                    config_repo,
+                    space_exc,
+                )
+                github_config_url = os.getenv(
+                    "TOON_CRAFTER_GITHUB_CONFIG_URL",
+                    "https://raw.githubusercontent.com/Doubiiu/ToonCrafter/main/configs/inference_512_v1.0.yaml",
+                )
+                _download_file_with_resume(github_config_url, config_dest)
+            else:
+                _copy_if_newer(downloaded_config, config_dest)
+
+        if config_dest.exists():
+            _copy_if_newer(config_dest, official_config_dest)
+        if ckpt.exists():
+            _ensure_symlink(
+                Path("../../model.ckpt"),
+                dest / "checkpoints" / "tooncrafter_512_interp_v1" / "model.ckpt",
+            )
+
+        missing = [
+            str(path)
+            for path in [ckpt, config_dest]
+            if not path.exists()
+        ]
+        if missing:
+            logger.warning("ToonCrafter download may be incomplete. Missing:\n  %s", "\n  ".join(missing))
+        else:
+            logger.info("ToonCrafter weight verification passed: %s", dest)
     except Exception as exc:
         logger.error("ToonCrafter download failed: %s", exc)
         logger.error(
             "Manual alternative:\n"
-            "  huggingface-cli download Doubiiu/ToonCrafter --local-dir %s",
+            "  HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Doubiiu/ToonCrafter model.ckpt --repo-type model --local-dir %s\n"
+            "  HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Doubiiu/tooncrafter configs/inference_512_v1.0.yaml --repo-type space --local-dir %s/_space\n"
+            "  cp %s/_space/configs/inference_512_v1.0.yaml %s/config.yaml",
+            dest,
+            dest,
+            dest,
             dest,
         )
 

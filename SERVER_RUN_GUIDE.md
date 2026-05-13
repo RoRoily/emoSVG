@@ -351,6 +351,48 @@ pip install opencv-python-headless==4.9.0.80 -i https://pypi.tuna.tsinghua.edu.c
 
 ---
 
+## 8.5 ToonCrafter 权重下载
+
+ToonCrafter 建议最后处理。新版 `scripts/download_models.py` 会从 HF 模型仓库下载大权重 `model.ckpt`，再从官方 Space/GitHub 补 `configs/inference_512_v1.0.yaml`，并复制成 emoSVG 期望的 `config.yaml`。
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HOME=/data3/zhengmuhan/workspace/emosvg_models/.hf_cache
+python scripts/download_models.py --models toon_crafter
+```
+
+成功后至少应存在：
+
+```bash
+ls -lh "$TOON_CRAFTER_MODEL_PATH/model.ckpt"
+ls -lh "$TOON_CRAFTER_MODEL_PATH/config.yaml"
+```
+
+如果脚本失败，手动分两步：
+
+```bash
+mkdir -p "$TOON_CRAFTER_MODEL_PATH"
+
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Doubiiu/ToonCrafter \
+  model.ckpt \
+  --repo-type model \
+  --local-dir "$TOON_CRAFTER_MODEL_PATH" \
+  --resume-download
+
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Doubiiu/tooncrafter \
+  configs/inference_512_v1.0.yaml \
+  --repo-type space \
+  --local-dir "$TOON_CRAFTER_MODEL_PATH/_space" \
+  --resume-download
+
+cp "$TOON_CRAFTER_MODEL_PATH/_space/configs/inference_512_v1.0.yaml" \
+   "$TOON_CRAFTER_MODEL_PATH/config.yaml"
+```
+
+注意：`import lvdm OK` 只说明官方源码路径接好了；真实启用 ToonCrafter 还需要 wrapper 和官方推理入口适配。
+
+---
+
 ## 9. 推荐长期结构
 
 ```text

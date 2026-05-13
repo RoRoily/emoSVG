@@ -882,9 +882,11 @@ $MODELS_ROOT/ip_adapter/ip-adapter-faceid_sd15.bin
 
 ### 9.5 下载 ToonCrafter
 
-ToonCrafter 权重较大，建议最后下载：
+ToonCrafter 权重较大，建议最后下载。它和前几个模型有一点不同：官方 HF 模型仓库主要放 `model.ckpt`，推理配置文件通常来自官方 Space/GitHub 代码里的 `configs/inference_512_v1.0.yaml`。新版下载脚本会自动把配置复制成 emoSVG 期望的 `$TOON_CRAFTER_MODEL_PATH/config.yaml`。
 
 ```bash
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HOME=/data3/zhengmuhan/workspace/emosvg_models/.hf_cache
 python scripts/download_models.py --models toon_crafter
 ```
 
@@ -893,6 +895,53 @@ python scripts/download_models.py --models toon_crafter
 ```text
 $MODELS_ROOT/toon_crafter/model.ckpt
 $MODELS_ROOT/toon_crafter/config.yaml
+$MODELS_ROOT/toon_crafter/configs/inference_512_v1.0.yaml
+$MODELS_ROOT/toon_crafter/checkpoints/tooncrafter_512_interp_v1/model.ckpt
+```
+
+检查：
+
+```bash
+ls -lh "$TOON_CRAFTER_MODEL_PATH/model.ckpt"
+ls -lh "$TOON_CRAFTER_MODEL_PATH/config.yaml"
+ls -lh "$TOON_CRAFTER_MODEL_PATH/configs/inference_512_v1.0.yaml"
+ls -lh "$TOON_CRAFTER_MODEL_PATH/checkpoints/tooncrafter_512_interp_v1/model.ckpt"
+```
+
+如果脚本下载失败，可以手动分两步下载：
+
+```bash
+mkdir -p "$TOON_CRAFTER_MODEL_PATH"
+
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Doubiiu/ToonCrafter \
+  model.ckpt \
+  --repo-type model \
+  --local-dir "$TOON_CRAFTER_MODEL_PATH" \
+  --resume-download
+
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Doubiiu/tooncrafter \
+  configs/inference_512_v1.0.yaml \
+  --repo-type space \
+  --local-dir "$TOON_CRAFTER_MODEL_PATH/_space" \
+  --resume-download
+
+cp "$TOON_CRAFTER_MODEL_PATH/_space/configs/inference_512_v1.0.yaml" \
+   "$TOON_CRAFTER_MODEL_PATH/config.yaml"
+
+mkdir -p "$TOON_CRAFTER_MODEL_PATH/configs"
+cp "$TOON_CRAFTER_MODEL_PATH/config.yaml" \
+   "$TOON_CRAFTER_MODEL_PATH/configs/inference_512_v1.0.yaml"
+
+mkdir -p "$TOON_CRAFTER_MODEL_PATH/checkpoints/tooncrafter_512_interp_v1"
+ln -sf ../../model.ckpt \
+  "$TOON_CRAFTER_MODEL_PATH/checkpoints/tooncrafter_512_interp_v1/model.ckpt"
+```
+
+如果 `Doubiiu/tooncrafter` 这个 Space 下载失败，再用 GitHub 原始配置文件兜底：
+
+```bash
+wget -O "$TOON_CRAFTER_MODEL_PATH/config.yaml" \
+  https://raw.githubusercontent.com/Doubiiu/ToonCrafter/main/configs/inference_512_v1.0.yaml
 ```
 
 ### 9.6 检查模型目录
