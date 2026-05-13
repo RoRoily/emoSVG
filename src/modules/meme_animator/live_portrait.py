@@ -546,10 +546,20 @@ class LivePortraitWrapper:
     @staticmethod
     def _preprocess_source(source_bgr: np.ndarray, pipeline) -> torch.Tensor:
         """
-        Convert BGR uint8 → float32 RGB tensor normalised to [-1, 1],
-        shape (1, 3, H, W), on the same device as the pipeline.
+        Convert BGR uint8 into the input tensor expected by the active API.
+
+        Official LivePortrait keeps neural methods on
+        ``pipeline.live_portrait_wrapper`` and expects RGB uint8 images passed
+        through ``prepare_source`` (normalised to 0..1 internally). The mocked
+        legacy path still uses a direct tensor normalised to [-1, 1].
         """
         import torch
+
+        backend = LivePortraitWrapper._official_backend(pipeline)
+        if backend is not pipeline and hasattr(backend, "prepare_source"):
+            rgb_u8 = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2RGB)
+            return backend.prepare_source(rgb_u8)
+
         rgb = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 127.5 - 1.0
         tensor = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0)  # (1,3,H,W)
 
@@ -563,19 +573,30 @@ class LivePortraitWrapper:
         return tensor
 
     @staticmethod
+    def _official_backend(pipeline):
+        """Return the official LivePortrait neural wrapper when present."""
+        attrs = getattr(pipeline, "__dict__", {})
+        if "live_portrait_wrapper" in attrs:
+            backend = attrs["live_portrait_wrapper"]
+            if backend is not None:
+                return backend
+        return pipeline
+
+    @staticmethod
     def _extract_source_kp(pipeline, source_tensor: torch.Tensor) -> dict:
         """
         Extract keypoint info from the source image.
         Returns a dict with keys: pitch, yaw, roll, t, exp, scale, kp.
         """
         import torch
+        backend = LivePortraitWrapper._official_backend(pipeline)
         with torch.no_grad():
             try:
                 # Official API: get_kp_info returns a dict of motion parameters
-                kp_info = pipeline.get_kp_info(source_tensor)
+                kp_info = backend.get_kp_info(source_tensor)
             except AttributeError:
                 # Fallback for slightly different API versions
-                kp_info = pipeline.motion_extractor(source_tensor)
+                kp_info = backend.motion_extractor(source_tensor)
         return kp_info
 
     @classmethod
@@ -604,10 +625,17 @@ class LivePortraitWrapper:
 
         # Build 63-dim exp delta from SquashParams
         exp_delta = cls._squash_params_to_exp_delta(params)
-        exp_delta_t = torch.from_numpy(exp_delta).to(x_d_info["exp"].device)
+        exp_delta_t = torch.from_numpy(exp_delta).to(
+            dtype=x_d_info["exp"].dtype,
+            device=x_d_info["exp"].device,
+        )
 
-        # exp shape is (1, 63) — add delta
-        x_d_info["exp"] = x_d_info["exp"] + exp_delta_t.unsqueeze(0)
+        # exp may be either (1, 63) in older mocks or (1, 21, 3) in the
+        # official refined LivePortrait API.
+        if x_d_info["exp"].ndim == 3:
+            x_d_info["exp"] = x_d_info["exp"] + exp_delta_t.reshape_as(x_d_info["exp"])
+        else:
+            x_d_info["exp"] = x_d_info["exp"] + exp_delta_t.unsqueeze(0)
 
         # Head scale: squash/stretch maps to a scale multiplier
         # scale is a scalar tensor (1,) or (1,1)
@@ -686,10 +714,11 @@ class LivePortraitWrapper:
         t = torch.from_numpy(np.array(ip_image_embeds, dtype=np.float32))
         if t.ndim == 1:
             t = t.unsqueeze(0)  # (1, D)
+        backend = LivePortraitWrapper._official_backend(pipeline)
         try:
-            device = next(pipeline.parameters()).device
+            device = next(backend.parameters()).device
             t = t.to(device)
-        except (StopIteration, AttributeError):
+        except (StopIteration, AttributeError, TypeError):
             pass
         return t
 
@@ -716,6 +745,24 @@ class LivePortraitWrapper:
         import torch
 
         x_d_info = self._build_driving_info(kp_source, params)
+        backend = self._official_backend(pipeline)
+
+        if backend is not pipeline and hasattr(backend, "warp_decode"):
+            with torch.no_grad():
+                try:
+                    f_s = backend.extract_feature_3d(source_tensor)
+                    x_s = backend.transform_keypoint(kp_source)
+                    x_d = backend.transform_keypoint(x_d_info)
+                    if hasattr(backend, "stitching"):
+                        x_d = backend.stitching(x_s, x_d)
+                    result = backend.warp_decode(f_s, x_s, x_d)
+                    if hasattr(backend, "parse_output"):
+                        rgb = backend.parse_output(result["out"])[0]
+                        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                    out_rgb = result["out"]
+                except Exception as exc:
+                    raise AnimationError(f"LivePortrait official inference failed: {exc}") from exc
+            return self._tensor_to_bgr(out_rgb)
 
         with torch.no_grad():
             try:

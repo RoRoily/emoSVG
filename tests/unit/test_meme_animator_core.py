@@ -740,6 +740,78 @@ class TestLivePortraitRealPath:
         assert cfg.device_id == 0
         assert cfg.flag_force_cpu is False
 
+    def test_extract_source_kp_uses_nested_official_wrapper(self):
+        import torch
+        from unittest.mock import MagicMock
+
+        kp_info = {
+            "pitch": torch.zeros(1, 1), "yaw": torch.zeros(1, 1),
+            "roll": torch.zeros(1, 1), "t": torch.zeros(1, 3),
+            "exp": torch.zeros(1, 21, 3), "scale": torch.ones(1, 1),
+            "kp": torch.zeros(1, 21, 3),
+        }
+        official = MagicMock()
+        official.get_kp_info.return_value = kp_info
+        pipeline = MagicMock()
+        pipeline.live_portrait_wrapper = official
+
+        result = LivePortraitWrapper._extract_source_kp(
+            pipeline, torch.zeros(1, 3, 256, 256)
+        )
+
+        official.get_kp_info.assert_called_once()
+        assert result is kp_info
+
+    def test_build_driving_info_supports_official_exp_shape(self):
+        import torch
+
+        kp_source = {
+            "pitch": torch.zeros(1, 1), "yaw": torch.zeros(1, 1),
+            "roll": torch.zeros(1, 1), "t": torch.zeros(1, 3),
+            "exp": torch.zeros(1, 21, 3), "scale": torch.ones(1, 1),
+            "kp": torch.zeros(1, 21, 3),
+        }
+
+        x_d_info = LivePortraitWrapper._build_driving_info(
+            kp_source, SquashParams(eye_bulge_scale=2.0)
+        )
+
+        assert x_d_info["exp"].shape == (1, 21, 3)
+        assert torch.abs(x_d_info["exp"]).sum().item() > 0
+
+    def test_official_inference_path_uses_liveportrait_wrapper(self, sample_bgr):
+        import torch
+        from unittest.mock import MagicMock
+
+        official = MagicMock()
+        official.prepare_source.return_value = torch.zeros(1, 3, 256, 256)
+        kp_info = {
+            "pitch": torch.zeros(1, 1), "yaw": torch.zeros(1, 1),
+            "roll": torch.zeros(1, 1), "t": torch.zeros(1, 3),
+            "exp": torch.zeros(1, 21, 3), "scale": torch.ones(1, 1),
+            "kp": torch.zeros(1, 21, 3),
+        }
+        official.get_kp_info.return_value = kp_info
+        official.extract_feature_3d.return_value = torch.zeros(1, 32, 16, 64, 64)
+        official.transform_keypoint.return_value = torch.zeros(1, 21, 3)
+        official.warp_decode.return_value = {"out": torch.rand(1, 3, 64, 64)}
+        official.parse_output.return_value = [np.zeros((64, 64, 3), dtype=np.uint8)]
+        pipeline = MagicMock()
+        pipeline.live_portrait_wrapper = official
+
+        source_tensor = LivePortraitWrapper._preprocess_source(sample_bgr, pipeline)
+        kp_source = LivePortraitWrapper._extract_source_kp(pipeline, source_tensor)
+        result = LivePortraitWrapper(model_path=None)._infer_with_kp(
+            pipeline, source_tensor, kp_source, SquashParams()
+        )
+
+        official.prepare_source.assert_called_once()
+        official.extract_feature_3d.assert_called_once()
+        official.transform_keypoint.assert_called()
+        official.warp_decode.assert_called_once()
+        official.parse_output.assert_called_once()
+        assert result.shape == (64, 64, 3)
+
     def test_weights_present_disables_fallback(self, tmp_path):
         """Fake weight files should cause _use_fallback to be False."""
         weights = tmp_path / "pretrained_weights"
