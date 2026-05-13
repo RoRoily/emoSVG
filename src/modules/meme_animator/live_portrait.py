@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # WarpingNetwork ~1.2 GB + SPADEGenerator ~1.5 GB + Stitching ~0.5 GB
 _LIVE_PORTRAIT_VRAM_GB = 4.5
 
-# ── Expected weight files (relative to model_path / pretrained_weights) ───────
+# ── Expected weight files (relative to the resolved weights root) ──────────────
 _REQUIRED_WEIGHTS = [
     "liveportrait/base_models/appearance_feature_extractor.pth",
     "liveportrait/base_models/motion_extractor.pth",
@@ -55,6 +55,40 @@ _REQUIRED_WEIGHTS = [
     "liveportrait/base_models/spade_generator.pth",
     "liveportrait/retargeting_models/stitching_retargeting_module.pth",
 ]
+
+
+def _resolve_liveportrait_weights_root(model_path: Path | None) -> Path | None:
+    """
+    Find the directory containing ``liveportrait/base_models`` weights.
+
+    Older setup docs and some upstream layouts place weights under
+    ``<model_path>/pretrained_weights``. HuggingFace downloads from
+    ``KwaiVGI/LivePortrait`` commonly place them directly under
+    ``<model_path>/liveportrait``. Support both.
+    """
+    if model_path is None:
+        return None
+    candidates = [model_path / "pretrained_weights", model_path]
+    for root in candidates:
+        if all((root / rel).exists() for rel in _REQUIRED_WEIGHTS):
+            return root
+    return None
+
+
+def _resolve_liveportrait_models_config(model_path: Path | None) -> Path:
+    """Find LivePortrait ``models.yaml`` in the weights dir or source tree."""
+    candidates: list[Path] = []
+    if model_path is not None:
+        candidates.append(model_path / "src" / "config" / "models.yaml")
+    for source_dir in _candidate_liveportrait_src_dirs(model_path):
+        candidates.append(source_dir / "config" / "models.yaml")
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    # Return the default path so downstream errors include the expected location.
+    return (model_path or Path(".")) / "src" / "config" / "models.yaml"
 
 # ── 63-dim expression coefficient index map ───────────────────────────────────
 # LivePortrait represents motion as 21 3D keypoints (21 × 3 = 63 dims).
@@ -389,8 +423,7 @@ class LivePortraitWrapper:
     def _should_use_fallback(self) -> bool:
         if self._model_path is None:
             return True
-        weights_root = self._model_path / "pretrained_weights"
-        return not all((weights_root / f).exists() for f in _REQUIRED_WEIGHTS)
+        return _resolve_liveportrait_weights_root(self._model_path) is None
 
     # ── ModelRegistry registration ────────────────────────────────────────────
 
@@ -408,10 +441,12 @@ class LivePortraitWrapper:
         def _loader():
             InferenceConfig, LivePortraitPipeline = _import_liveportrait_api(model_path)
 
-            weights = model_path / "pretrained_weights"
+            weights = _resolve_liveportrait_weights_root(model_path)
+            if weights is None:
+                raise AnimationError(f"LivePortrait weights not found at {model_path!s}")
             try:
                 cfg = InferenceConfig(
-                    models_config=str(model_path / "src" / "config" / "models.yaml"),
+                    models_config=str(_resolve_liveportrait_models_config(model_path)),
                     checkpoint_F=str(weights / "liveportrait/base_models/appearance_feature_extractor.pth"),
                     checkpoint_M=str(weights / "liveportrait/base_models/motion_extractor.pth"),
                     checkpoint_W=str(weights / "liveportrait/base_models/warping_module.pth"),

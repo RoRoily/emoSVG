@@ -721,6 +721,21 @@ class TestLivePortraitRealPath:
         wrapper = LivePortraitWrapper(model_path=tmp_path)
         assert wrapper._use_fallback is False
 
+    def test_huggingface_weight_layout_disables_fallback(self, tmp_path):
+        """KwaiVGI/LivePortrait downloads put liveportrait/ directly under model_path."""
+        for rel in [
+            "liveportrait/base_models/appearance_feature_extractor.pth",
+            "liveportrait/base_models/motion_extractor.pth",
+            "liveportrait/base_models/warping_module.pth",
+            "liveportrait/base_models/spade_generator.pth",
+            "liveportrait/retargeting_models/stitching_retargeting_module.pth",
+        ]:
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"fake")
+        wrapper = LivePortraitWrapper(model_path=tmp_path)
+        assert wrapper._use_fallback is False
+
     def test_missing_one_weight_uses_fallback(self, tmp_path):
         """If any required weight is missing, fallback should be used."""
         weights = tmp_path / "pretrained_weights"
