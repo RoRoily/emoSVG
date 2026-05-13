@@ -91,6 +91,18 @@ def _resolve_liveportrait_models_config(model_path: Path | None) -> Path:
     return (model_path or Path(".")) / "src" / "config" / "models.yaml"
 
 
+def _resolve_liveportrait_landmark_path(weights_root: Path) -> Path:
+    """Find LivePortrait's human landmark ONNX file across known layouts."""
+    candidates = [
+        weights_root / "liveportrait" / "landmark.onnx",
+        weights_root / "pretrained_weights" / "liveportrait" / "landmark.onnx",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return weights_root / "liveportrait" / "landmark.onnx"
+
+
 def _liveportrait_device_id(device) -> int:
     """
     Convert a torch.device-like object into LivePortrait's integer device id.
@@ -102,6 +114,31 @@ def _liveportrait_device_id(device) -> int:
     if getattr(device, "type", None) == "cuda":
         return int(device.index or 0)
     return -1
+
+
+def _build_liveportrait_crop_config(CropConfig, weights_root: Path, device):
+    """
+    Build CropConfig for official LivePortrait.
+
+    The official pipeline constructs a Cropper during initialisation. Passing
+    ``None`` fails because Cropper immediately reads fields such as
+    ``insightface_root``.
+    """
+    import os
+
+    crop_cfg = CropConfig()
+    values = {
+        "insightface_root": str(
+            Path(os.getenv("INSIGHTFACE_ROOT", Path.home() / ".insightface")).expanduser()
+        ),
+        "landmark_ckpt_path": str(_resolve_liveportrait_landmark_path(weights_root)),
+        "device_id": _liveportrait_device_id(device),
+        "flag_force_cpu": getattr(device, "type", None) != "cuda",
+    }
+    for name, value in values.items():
+        if hasattr(crop_cfg, name):
+            setattr(crop_cfg, name, value)
+    return crop_cfg
 
 # ── 63-dim expression coefficient index map ───────────────────────────────────
 # LivePortrait represents motion as 21 3D keypoints (21 × 3 = 63 dims).
@@ -284,9 +321,10 @@ def _import_liveportrait_api(model_path: Path | None):
     Import LivePortrait classes, supporting both package and official src layouts.
     """
     try:
+        from liveportrait.config.crop_config import CropConfig  # type: ignore
         from liveportrait.config.inference_config import InferenceConfig  # type: ignore
         from liveportrait.live_portrait_pipeline import LivePortraitPipeline  # type: ignore
-        return InferenceConfig, LivePortraitPipeline
+        return InferenceConfig, CropConfig, LivePortraitPipeline
     except ImportError as first_exc:
         last_exc: Exception = first_exc
 
@@ -296,10 +334,11 @@ def _import_liveportrait_api(model_path: Path | None):
             continue
         try:
             _alias_official_liveportrait_src(source_dir.resolve())
+            from liveportrait.config.crop_config import CropConfig  # type: ignore
             from liveportrait.config.inference_config import InferenceConfig  # type: ignore
             from liveportrait.live_portrait_pipeline import LivePortraitPipeline  # type: ignore
             logger.info("Using LivePortrait source layout from %s", source_dir)
-            return InferenceConfig, LivePortraitPipeline
+            return InferenceConfig, CropConfig, LivePortraitPipeline
         except ImportError as exc:
             last_exc = exc
 
@@ -452,7 +491,7 @@ class LivePortraitWrapper:
         model_path = self._model_path  # capture for closure
 
         def _loader():
-            InferenceConfig, LivePortraitPipeline = _import_liveportrait_api(model_path)
+            InferenceConfig, CropConfig, LivePortraitPipeline = _import_liveportrait_api(model_path)
 
             weights = _resolve_liveportrait_weights_root(model_path)
             if weights is None:
@@ -469,7 +508,12 @@ class LivePortraitWrapper:
                     device_id=_liveportrait_device_id(self._registry.device_manager.device),
                     flag_use_half_precision=False,
                 )
-                pipeline = LivePortraitPipeline(inference_cfg=cfg, crop_cfg=None)
+                crop_cfg = _build_liveportrait_crop_config(
+                    CropConfig,
+                    weights,
+                    self._registry.device_manager.device,
+                )
+                pipeline = LivePortraitPipeline(inference_cfg=cfg, crop_cfg=crop_cfg)
             except Exception as exc:
                 raise AnimationError(
                     f"Failed to initialise LivePortrait pipeline: {exc}"

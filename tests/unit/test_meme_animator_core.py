@@ -718,6 +718,28 @@ class TestLivePortraitRealPath:
 
         assert _liveportrait_device_id(torch.device("cpu")) == -1
 
+    def test_build_liveportrait_crop_config_sets_required_paths(self, tmp_path, monkeypatch):
+        import torch
+        from src.modules.meme_animator.live_portrait import _build_liveportrait_crop_config
+
+        class FakeCropConfig:
+            insightface_root = ""
+            landmark_ckpt_path = ""
+            device_id = -1
+            flag_force_cpu = True
+
+        landmark = tmp_path / "liveportrait" / "landmark.onnx"
+        landmark.parent.mkdir(parents=True)
+        landmark.write_bytes(b"fake")
+        monkeypatch.setenv("INSIGHTFACE_ROOT", str(tmp_path / ".insightface"))
+
+        cfg = _build_liveportrait_crop_config(FakeCropConfig, tmp_path, torch.device("cuda"))
+
+        assert cfg.insightface_root == str(tmp_path / ".insightface")
+        assert cfg.landmark_ckpt_path == str(landmark)
+        assert cfg.device_id == 0
+        assert cfg.flag_force_cpu is False
+
     def test_weights_present_disables_fallback(self, tmp_path):
         """Fake weight files should cause _use_fallback to be False."""
         weights = tmp_path / "pretrained_weights"
