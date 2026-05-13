@@ -1,4 +1,4 @@
-"""
+﻿"""
 LivePortrait wrapper for the meme_animator module.
 
 Responsibilities:
@@ -89,6 +89,19 @@ def _resolve_liveportrait_models_config(model_path: Path | None) -> Path:
 
     # Return the default path so downstream errors include the expected location.
     return (model_path or Path(".")) / "src" / "config" / "models.yaml"
+
+
+def _liveportrait_device_id(device) -> int:
+    """
+    Convert a torch.device-like object into LivePortrait's integer device id.
+
+    Official LivePortrait builds device strings internally, commonly as
+    ``cuda:{device_id}``. Passing ``None`` therefore becomes invalid
+    ``cuda:None`` once real weights are used.
+    """
+    if getattr(device, "type", None) == "cuda":
+        return int(device.index or 0)
+    return -1
 
 # ── 63-dim expression coefficient index map ───────────────────────────────────
 # LivePortrait represents motion as 21 3D keypoints (21 × 3 = 63 dims).
@@ -453,8 +466,8 @@ class LivePortraitWrapper:
                     checkpoint_G=str(weights / "liveportrait/base_models/spade_generator.pth"),
                     checkpoint_S=str(weights / "liveportrait/retargeting_models/stitching_retargeting_module.pth"),
                     # Explicitly keep on CPU — DeviceManager will move to GPU
-                    device_id=None,
-                    flag_use_half_precision=False,  # set to True after move_to_gpu
+                    device_id=_liveportrait_device_id(self._registry.device_manager.device),
+                    flag_use_half_precision=False,
                 )
                 pipeline = LivePortraitPipeline(inference_cfg=cfg, crop_cfg=None)
             except Exception as exc:

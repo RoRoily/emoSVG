@@ -705,6 +705,19 @@ class TestLivePortraitRealPath:
         assert result.min() >= 0
         assert result.max() <= 255
 
+    def test_liveportrait_device_id_uses_cuda_index(self):
+        import torch
+        from src.modules.meme_animator.live_portrait import _liveportrait_device_id
+
+        assert _liveportrait_device_id(torch.device("cuda")) == 0
+        assert _liveportrait_device_id(torch.device("cuda:2")) == 2
+
+    def test_liveportrait_device_id_uses_minus_one_for_cpu(self):
+        import torch
+        from src.modules.meme_animator.live_portrait import _liveportrait_device_id
+
+        assert _liveportrait_device_id(torch.device("cpu")) == -1
+
     def test_weights_present_disables_fallback(self, tmp_path):
         """Fake weight files should cause _use_fallback to be False."""
         weights = tmp_path / "pretrained_weights"

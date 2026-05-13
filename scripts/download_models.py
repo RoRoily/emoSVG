@@ -1,4 +1,4 @@
-"""
+﻿"""
 One-shot script to download all required model weights.
 
 Usage:
@@ -92,20 +92,6 @@ def download_triposr() -> None:
         logger.info("TripoSR downloaded to %s", MODELS_ROOT / "triposr")
     except Exception as exc:
         logger.error("TripoSR download failed: %s", exc)
-
-
-def download_sam() -> None:
-    logger.info("Downloading SAM ViT-H checkpoint (~2.4 GB)...")
-    import urllib.request
-    url = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
-    dest = MODELS_ROOT / "sam" / "sam_vit_h_4b8939.pth"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        logger.info("SAM checkpoint already exists at %s — skipping.", dest)
-        return
-    logger.info("Downloading from %s ...", url)
-    urllib.request.urlretrieve(url, str(dest))
-    logger.info("SAM downloaded to %s", dest)
 
 
 def download_sam() -> None:
