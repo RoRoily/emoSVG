@@ -243,7 +243,18 @@ class _OfficialToonCrafterSubprocess:
                 "Add the official ToonCrafter directory to Python path or set "
                 "TOON_CRAFTER_REPO_PATH."
             ) from exc
-        return Path(lvdm.__file__).resolve().parents[1]
+        module_file = getattr(lvdm, "__file__", None)
+        if module_file:
+            return Path(module_file).resolve().parents[1]
+
+        module_paths = list(getattr(lvdm, "__path__", []))
+        if module_paths:
+            return Path(module_paths[0]).resolve().parent
+
+        raise AnimationError(
+            "Could not infer ToonCrafter source directory from lvdm. "
+            "Set TOON_CRAFTER_REPO_PATH explicitly."
+        )
 
     @staticmethod
     def _aligned_size(value: int) -> int:
