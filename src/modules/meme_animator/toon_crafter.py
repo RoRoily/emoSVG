@@ -121,8 +121,7 @@ class _OfficialToonCrafterSubprocess:
                 cv2.imwrite(str(prompt_dir / f"pair_{idx:04d}_1.png"), frame1)
 
             h, w = pairs[0][0].shape[:2]
-            height = self._aligned_size(int(os.getenv("TOON_CRAFTER_HEIGHT", str(h))))
-            width = self._aligned_size(int(os.getenv("TOON_CRAFTER_WIDTH", str(w))))
+            height, width = self._target_size(h, w)
             video_length = self._video_length(target_count)
 
             cmd = self._build_command(
@@ -259,6 +258,22 @@ class _OfficialToonCrafterSubprocess:
     @staticmethod
     def _aligned_size(value: int) -> int:
         return max(16, (value // 16) * 16)
+
+    @classmethod
+    def _target_size(cls, source_height: int, source_width: int) -> tuple[int, int]:
+        raw_height = os.getenv("TOON_CRAFTER_HEIGHT")
+        raw_width = os.getenv("TOON_CRAFTER_WIDTH")
+        if raw_height or raw_width:
+            height = int(raw_height or source_height)
+            width = int(raw_width or source_width)
+            return cls._aligned_size(height), cls._aligned_size(width)
+
+        max_side = int(os.getenv("TOON_CRAFTER_MAX_SIDE", "256"))
+        source_max = max(source_height, source_width)
+        scale = min(1.0, max_side / max(source_max, 1))
+        height = cls._aligned_size(int(source_height * scale))
+        width = cls._aligned_size(int(source_width * scale))
+        return height, width
 
     @staticmethod
     def _video_length(target_count: int) -> int:

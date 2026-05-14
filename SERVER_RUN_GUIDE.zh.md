@@ -1072,11 +1072,14 @@ ToonCrafter 权重大、耗显存，建议最后测试。新版 `ToonCrafterWrap
 
 ```bash
 TOON_CRAFTER_REPO_PATH=/data3/zhengmuhan/workspace/third_party/ToonCrafter
+TOON_CRAFTER_MAX_SIDE=256
 TOON_CRAFTER_DDIM_STEPS=25
 TOON_CRAFTER_VIDEO_LENGTH=16
 TOON_CRAFTER_PERFRAME_AE=1
 TOON_CRAFTER_TIMEOUT_SEC=1800
 ```
+
+`TOON_CRAFTER_MAX_SIDE=256` 表示即使 API 请求 `512x512`，ToonCrafter 也默认在最长边 256 的内部分辨率上推理，再缩回输出分辨率。这是为了避免 24 GB 显存下直接跑 `512x512x16` 导致 OOM。若显存充足或想提高质量，可以改成 `384` 或显式设置 `TOON_CRAFTER_WIDTH/TOON_CRAFTER_HEIGHT`。
 
 如果希望保留每次调用的临时 `prompt_dir` 和输出，便于排查：
 
