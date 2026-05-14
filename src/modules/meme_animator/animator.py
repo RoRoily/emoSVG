@@ -98,6 +98,11 @@ class MemeAnimator:
             custom_params=request.custom_params,
         )
         logger.info("Motion curve: %d frames designed", len(param_sequence))
+        toon_crafter_applied = False
+        toon_crafter_failed = False
+        toon_crafter_mode = (
+            "driver" if request.use_toon_crafter_as_driver else "interpolator"
+        )
 
         # 3. Render keyframes via LivePortrait (model stays on GPU for the full batch)
         try:
@@ -117,6 +122,7 @@ class MemeAnimator:
                     peak_frame,
                     num_frames=request.driver_num_frames,
                 )
+                toon_crafter_applied = True
                 logger.info(
                     "ToonCrafter driver done: %d frames generated", len(rendered_frames)
                 )
@@ -147,8 +153,10 @@ class MemeAnimator:
                     rendered_frames,
                     frames_between=request.frames_between,
                 )
+                toon_crafter_applied = True
                 logger.info("ToonCrafter smoothing done: %d total frames", len(rendered_frames))
             except Exception as exc:
+                toon_crafter_failed = True
                 logger.warning("ToonCrafter smoothing failed (%s) — using unsmoothed frames.", exc)
 
         # 5. Build KeyFrame metadata (sample every 5th frame to keep result small)
@@ -181,11 +189,17 @@ class MemeAnimator:
             "live_portrait_fallback" if self._live_portrait._use_fallback else "live_portrait"
         )
         if request.use_toon_crafter:
-            tc_backend = (
-                "toon_crafter_fallback" if self._toon_crafter._use_fallback else "toon_crafter"
-            )
-            mode = "driver" if request.use_toon_crafter_as_driver else "interpolator"
-            backend = f"{lp_backend}+{tc_backend}[{mode}]"
+            if toon_crafter_applied:
+                tc_backend = (
+                    "toon_crafter_fallback"
+                    if self._toon_crafter._use_fallback
+                    else "toon_crafter"
+                )
+            elif toon_crafter_failed:
+                tc_backend = "toon_crafter_failed"
+            else:
+                tc_backend = "toon_crafter_skipped"
+            backend = f"{lp_backend}+{tc_backend}[{toon_crafter_mode}]"
         else:
             backend = lp_backend
 

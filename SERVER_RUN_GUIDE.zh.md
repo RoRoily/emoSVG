@@ -1066,7 +1066,25 @@ curl -X POST http://127.0.0.1:8000/generate \
 
 ### 11.6 最后再尝试 ToonCrafter
 
-ToonCrafter 权重大、耗显存，且当前 wrapper 与上游 API 可能需要适配。建议最后测试：
+ToonCrafter 权重大、耗显存，建议最后测试。新版 `ToonCrafterWrapper` 会通过官方源码里的 `scripts/evaluation/inference.py` 调用真实 ToonCrafter，因此需要确保源码路径、权重和运行依赖都已准备好。
+
+建议在 `.env` 中加入：
+
+```bash
+TOON_CRAFTER_REPO_PATH=/data3/zhengmuhan/workspace/third_party/ToonCrafter
+TOON_CRAFTER_DDIM_STEPS=25
+TOON_CRAFTER_VIDEO_LENGTH=16
+TOON_CRAFTER_PERFRAME_AE=1
+TOON_CRAFTER_TIMEOUT_SEC=1800
+```
+
+如果希望保留每次调用的临时 `prompt_dir` 和输出，便于排查：
+
+```bash
+TOON_CRAFTER_KEEP_TMP=1
+```
+
+先确认官方脚本能单独跑通，再测 API：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/animate \
@@ -1080,7 +1098,28 @@ curl -X POST http://127.0.0.1:8000/animate \
   -F "height=512"
 ```
 
-如果报 `No module named tooncrafter` 或 `ToonCrafterInference` 不存在，但 `import lvdm` 成功，说明主要问题在 adapter 对接，而不是权重或基础环境。
+如果真实 ToonCrafter 启用成功，服务端日志会出现类似：
+
+```text
+Running official ToonCrafter: ... pair(s)
+>>> model checkpoint loaded.
+Saved in ...
+ToonCrafter smoothing done
+```
+
+API 返回的 `backend_used` 应包含：
+
+```text
+live_portrait+toon_crafter[interpolator]
+```
+
+如果返回：
+
+```text
+live_portrait+toon_crafter_failed[interpolator]
+```
+
+说明请求被回退到了未平滑的 LivePortrait 帧，需要看服务端日志里的 ToonCrafter stderr。
 
 ---
 
