@@ -1,12 +1,13 @@
-"""Heuristic Q-style cartoon face geometry analysis.
+"""Q-style cartoon face geometry analysis.
 
-This is the first engineering step away from human-face landmark assumptions.
-It intentionally starts with deterministic image geometry so the pipeline can
-produce debuggable landmarks before a learned stylized detector is plugged in.
+The public CartoonFaceAnalyzer prefers a trained anime landmark detector when
+available, while keeping the deterministic heuristic analyzer as a fallback for
+CPU-only tests and environments where OpenMMLab dependencies are not installed.
 """
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import cv2
@@ -18,7 +19,124 @@ logger = logging.getLogger(__name__)
 
 
 class CartoonFaceAnalyzer:
-    """Detect coarse Q-style face, eye, and mouth geometry from a still image."""
+    """Detect Q-style face, eye, and mouth geometry from a still image.
+
+    Backends:
+      - auto: prefer hysts/anime-face-detector, then heuristic fallback.
+      - anime_face_detector: require the trained 28-landmark anime detector
+        unless fallback is explicitly enabled.
+      - heuristic: use deterministic color/geometry rules only.
+    """
+
+    BACKEND_AUTO = "auto"
+    BACKEND_ANIME_FACE_DETECTOR = "anime_face_detector"
+    BACKEND_HEURISTIC = "heuristic"
+
+    def __init__(
+        self,
+        backend: str | None = None,
+        device: str | None = None,
+        detector_name: str | None = None,
+        allow_fallback: bool | None = None,
+    ) -> None:
+        self.backend = (backend or os.getenv("CARTOON_ANALYZER_BACKEND") or self.BACKEND_AUTO).lower()
+        self.device = device or os.getenv("CARTOON_ANALYZER_DEVICE") or "cuda:0"
+        self.detector_name = (
+            detector_name
+            or os.getenv("CARTOON_ANALYZER_MODEL")
+            or "yolov3"
+        )
+        if allow_fallback is None:
+            allow_fallback = os.getenv("CARTOON_ANALYZER_ALLOW_HEURISTIC_FALLBACK", "1") != "0"
+        self.allow_fallback = allow_fallback
+        self._heuristic = HeuristicCartoonFaceAnalyzer()
+        self._trained_backend = None
+        self._trained_backend_error: str | None = None
+
+    def analyze(
+        self,
+        source_image_path: Path,
+        resolution: tuple[int, int] | None = None,
+    ) -> CartoonFaceAnalysis:
+        bgr = self._load_bgr(source_image_path, resolution)
+        return self.analyze_bgr(bgr)
+
+    def analyze_bgr(self, image_bgr: np.ndarray) -> CartoonFaceAnalysis:
+        if image_bgr.ndim != 3 or image_bgr.shape[2] != 3:
+            raise ValueError("CartoonFaceAnalyzer expects an HxWx3 BGR image")
+
+        if self.backend == self.BACKEND_HEURISTIC:
+            return self._heuristic.analyze_bgr(image_bgr)
+
+        if self.backend not in {
+            self.BACKEND_AUTO,
+            self.BACKEND_ANIME_FACE_DETECTOR,
+        }:
+            raise ValueError(
+                "CARTOON_ANALYZER_BACKEND must be one of: "
+                "auto, anime_face_detector, heuristic"
+            )
+
+        try:
+            backend = self._get_trained_backend()
+            if backend is None:
+                raise RuntimeError(self._trained_backend_error or "trained backend unavailable")
+            foreground_mask = self._foreground_mask(image_bgr)
+            h, w = image_bgr.shape[:2]
+            foreground_bbox = self._mask_bbox(foreground_mask) or BBox(0, 0, w, h)
+            return backend.analyze_bgr(
+                image_bgr,
+                foreground_mask=foreground_mask,
+                foreground_bbox=foreground_bbox,
+            )
+        except Exception as exc:
+            if self.backend == self.BACKEND_ANIME_FACE_DETECTOR and not self.allow_fallback:
+                raise
+            logger.warning(
+                "Trained cartoon analyzer unavailable or failed (%s); using heuristic fallback.",
+                exc,
+            )
+            result = self._heuristic.analyze_bgr(image_bgr)
+            result.backend_used = "anime_face_detector_unavailable+heuristic_fallback"
+            result.geometry.warnings.append(f"trained analyzer fallback: {exc}")
+            return result
+
+    def _get_trained_backend(self):
+        if self._trained_backend is not None:
+            return self._trained_backend
+        if self._trained_backend_error is not None:
+            return None
+        try:
+            from .anime_face_detector_adapter import AnimeFaceDetectorAdapter
+            self._trained_backend = AnimeFaceDetectorAdapter(
+                detector_name=self.detector_name,
+                device=self.device,
+            )
+            logger.info(
+                "Using trained cartoon analyzer backend: anime_face_detector(%s) on %s",
+                self.detector_name,
+                self.device,
+            )
+        except Exception as exc:
+            self._trained_backend_error = str(exc)
+            logger.info("anime_face_detector backend is not available: %s", exc)
+        return self._trained_backend
+
+    @staticmethod
+    def _load_bgr(path: Path, resolution: tuple[int, int] | None) -> np.ndarray:
+        return HeuristicCartoonFaceAnalyzer._load_bgr(path, resolution)
+
+    @staticmethod
+    def _foreground_mask(image_bgr: np.ndarray) -> np.ndarray:
+        return HeuristicCartoonFaceAnalyzer._foreground_mask(image_bgr)
+
+    @staticmethod
+    def _mask_bbox(mask: np.ndarray) -> BBox | None:
+        return HeuristicCartoonFaceAnalyzer._mask_bbox(mask)
+
+
+class HeuristicCartoonFaceAnalyzer:
+    """Deterministic fallback for Q-style face, eye, and mouth geometry."""
 
     def analyze(
         self,
@@ -83,6 +201,7 @@ class CartoonFaceAnalyzer:
             image_size=(w, h),
             geometry=geometry,
             foreground_mask=foreground_mask,
+            backend_used="heuristic_cartoon_geometry",
         )
 
     @staticmethod

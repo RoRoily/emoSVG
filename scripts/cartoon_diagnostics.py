@@ -21,6 +21,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=Path("outputs"), help="Output root")
     parser.add_argument("--width", type=int, default=512, help="Debug canvas width")
     parser.add_argument("--height", type=int, default=512, help="Debug canvas height")
+    parser.add_argument(
+        "--backend",
+        default=None,
+        choices=("auto", "anime_face_detector", "heuristic"),
+        help="Cartoon analyzer backend. Defaults to CARTOON_ANALYZER_BACKEND or auto.",
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Device for anime_face_detector, e.g. cuda:0 or cpu.",
+    )
+    parser.add_argument(
+        "--strict-trained",
+        action="store_true",
+        help="Fail instead of falling back to heuristic when anime_face_detector is unavailable.",
+    )
     return parser.parse_args()
 
 
@@ -29,7 +45,11 @@ def main() -> None:
     if not args.image.exists():
         raise SystemExit(f"Image does not exist: {args.image}")
 
-    analyzer = CartoonFaceAnalyzer()
+    analyzer = CartoonFaceAnalyzer(
+        backend=args.backend,
+        device=args.device,
+        allow_fallback=not args.strict_trained,
+    )
     parser = CartoonLayerParser(analyzer=analyzer)
 
     bgr = CartoonFaceAnalyzer._load_bgr(args.image, (args.width, args.height))
@@ -49,6 +69,7 @@ def main() -> None:
 
     print(json.dumps({
         "debug_dir": str(writer.debug_dir),
+        "backend_used": analysis.backend_used,
         "confidence": analysis.geometry.confidence,
         "layer_count": len(layers.layers),
         "warnings": analysis.geometry.warnings + layers.warnings,
