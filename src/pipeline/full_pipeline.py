@@ -12,17 +12,29 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
+
 from src.core import ModelRegistry
+from src.modules.cartoon_analyzer.analyzer import CartoonFaceAnalyzer
+from src.modules.cartoon_analyzer.schemas import CartoonFaceAnalysis
+from src.modules.cartoon_layer_parser.parser import CartoonLayerParser
+from src.modules.cartoon_layer_parser.schemas import CartoonLayerParseResult
 from src.modules.ip_extractor.extractor import IPExtractor
 from src.modules.ip_extractor.schemas import ExtractionRequest, IPFeatures
 from src.modules.meme_animator.animator import MemeAnimator
-from src.modules.meme_animator.schemas import AnimationRequest, AnimationResult, MemeExpression
+from src.modules.meme_animator.schemas import (
+    AnimationBackend,
+    AnimationRequest,
+    AnimationResult,
+    MemeExpression,
+)
 from src.modules.reconstructor_3d.reconstructor import Reconstructor3D
 from src.modules.reconstructor_3d.schemas import ReconstructionRequest, ReconstructionResult
 from src.modules.svg_vectorizer.schemas import VectorizationRequest, VectorizationResult
 from src.modules.svg_vectorizer.vectorizer import SVGVectorizer
 
 from .base_pipeline import BasePipeline
+from .debug_artifacts import PipelineDebugWriter
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +49,7 @@ class FullPipelineRequest:
     run_3d: bool = True
     run_svg: bool = True
     seed: int | None = None
+    animation_backend: AnimationBackend = AnimationBackend.LIVE_PORTRAIT
     # False (default) = use the peak animation keyframe (exaggerated pose) as
     # input for 3D reconstruction and SVG vectorization.
     # True = use the original source image (preserves canonical proportions).
@@ -44,6 +57,8 @@ class FullPipelineRequest:
     # ToonCrafter inter-frame smoothing
     use_toon_crafter: bool = False
     frames_between: int = 4
+    # Write stage-0/1/2 diagnostic artifacts for cartoon routing.
+    debug: bool = False
 
 
 @dataclass
@@ -52,6 +67,9 @@ class FullPipelineResult:
     animation: AnimationResult
     reconstruction: ReconstructionResult | None = None
     vectorization: VectorizationResult | None = None
+    cartoon_analysis: CartoonFaceAnalysis | None = None
+    cartoon_layers: CartoonLayerParseResult | None = None
+    debug_dir: Path | None = None
     elapsed_seconds: float = 0.0
 
 
@@ -82,6 +100,8 @@ class FullPipeline(BasePipeline):
     ) -> None:
         self._registry = registry or ModelRegistry.instance()
         self._output_root = output_root
+        self._cartoon_analyzer = CartoonFaceAnalyzer()
+        self._cartoon_layer_parser = CartoonLayerParser(analyzer=self._cartoon_analyzer)
 
         self._ip_extractor = IPExtractor(
             ip_adapter_path=ip_adapter_path,
@@ -139,7 +159,56 @@ class FullPipeline(BasePipeline):
             request.expression.value,
         )
 
-        # Step 1 — IP feature extraction
+        # Stage 0/1/2 - cartoon geometry and lightweight layer parsing.
+        debug_writer: PipelineDebugWriter | None = None
+        if request.debug:
+            debug_writer = PipelineDebugWriter(
+                self._output_root,
+                source_stem=request.source_image_path.stem,
+                expression=request.expression.value,
+            )
+
+        cartoon_analysis: CartoonFaceAnalysis | None = None
+        cartoon_layers: CartoonLayerParseResult | None = None
+        needs_cartoon_diagnostics = request.debug or request.animation_backend in {
+            AnimationBackend.AUTO,
+            AnimationBackend.CARTOON_RIG,
+        }
+        if needs_cartoon_diagnostics:
+            resized_source = None
+            try:
+                resized_source = self._load_debug_source(
+                    request.source_image_path,
+                    request.resolution,
+                )
+                cartoon_analysis = self._cartoon_analyzer.analyze_bgr(resized_source)
+                cartoon_layers = self._cartoon_layer_parser.parse_bgr(
+                    resized_source,
+                    cartoon_analysis.geometry,
+                    cartoon_analysis.foreground_mask,
+                )
+                logger.info(
+                    "Stage 0/1/2 cartoon diagnostics done: confidence=%.2f layers=%d",
+                    cartoon_analysis.geometry.confidence,
+                    len(cartoon_layers.layers),
+                )
+                if debug_writer:
+                    debug_writer.write_input(resized_source)
+                    debug_writer.write_analysis_overlay(resized_source, cartoon_analysis)
+                    debug_writer.write_layer_overlay(resized_source, cartoon_layers)
+                    debug_writer.write_layers(cartoon_layers)
+                    debug_writer.update_metrics(
+                        cartoon_analysis=cartoon_analysis.to_dict(),
+                        cartoon_layers=cartoon_layers.to_dict(),
+                    )
+            except Exception as exc:
+                logger.warning("Cartoon diagnostics failed (%s); continuing pipeline.", exc)
+                if debug_writer:
+                    if resized_source is not None:
+                        debug_writer.write_input(resized_source)
+                    debug_writer.update_metrics(cartoon_diagnostics_error=str(exc))
+
+        # Step 1 - IP feature extraction.
         ip_features = self._ip_extractor.extract(
             ExtractionRequest(source_image_path=request.source_image_path)
         )
@@ -155,7 +224,10 @@ class FullPipeline(BasePipeline):
                 fps=request.fps,
                 resolution=request.resolution,
                 seed=request.seed,
+                animation_backend=request.animation_backend,
                 ip_image_embeds=ip_features.image_embeds,
+                cartoon_analysis=cartoon_analysis,
+                cartoon_layers=cartoon_layers,
                 use_toon_crafter=request.use_toon_crafter,
                 frames_between=request.frames_between,
             )
@@ -169,6 +241,17 @@ class FullPipeline(BasePipeline):
         # Resolve the input path for steps 3 and 4 — computed once and reused.
         # use_source_for_3d_svg=True  → original source image (canonical proportions)
         # use_source_for_3d_svg=False → peak animation keyframe (exaggerated pose, default)
+        if debug_writer:
+            debug_writer.write_keyframe_contact_sheet(animation.keyframes)
+            debug_writer.update_metrics(
+                ip_backend=ip_features.backend_used,
+                animation_backend=animation.backend_used,
+                animation_path=str(animation.output_path),
+                frame_count=animation.frame_count,
+                duration_ms=animation.duration_ms,
+                animation_metrics=animation.metrics,
+            )
+
         def _resolve_secondary_input() -> Path:
             if request.use_source_for_3d_svg:
                 return request.source_image_path
@@ -211,12 +294,24 @@ class FullPipeline(BasePipeline):
 
         elapsed = time.monotonic() - t0
         logger.info("FullPipeline.execute done in %.2f s", elapsed)
+        if debug_writer:
+            debug_writer.update_metrics(
+                elapsed_seconds=elapsed,
+                reconstruction_backend=(
+                    reconstruction.backend_used if reconstruction else "skipped"
+                ),
+                svg_backend=vectorization.backend_used if vectorization else "skipped",
+            )
+            debug_writer.write_metrics()
 
         return FullPipelineResult(
             ip_features=ip_features,
             animation=animation,
             reconstruction=reconstruction,
             vectorization=vectorization,
+            cartoon_analysis=cartoon_analysis,
+            cartoon_layers=cartoon_layers,
+            debug_dir=debug_writer.debug_dir if debug_writer else None,
             elapsed_seconds=elapsed,
         )
 
@@ -224,9 +319,24 @@ class FullPipeline(BasePipeline):
 
     def _save_keyframe(self, image, stem: str) -> Path:
         """Persist a keyframe numpy array to disk and return its path."""
-        import cv2
         tmp_dir = self._output_root / "_tmp_keyframes"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         path = tmp_dir / f"{stem}_peak_{int(time.time())}.png"
         cv2.imwrite(str(path), image)
         return path
+
+    @staticmethod
+    def _load_debug_source(path: Path, resolution: tuple[int, int]):
+        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise ValueError(f"Failed to read image: {path}")
+        if img.ndim == 2:
+            bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif img.shape[2] == 4:
+            alpha = img[:, :, 3:4].astype("float32") / 255.0
+            bgr = img[:, :, :3].astype("float32") * alpha + 255.0 * (1.0 - alpha)
+            bgr = bgr.astype("uint8")
+        else:
+            bgr = img[:, :, :3]
+        w, h = resolution
+        return cv2.resize(bgr, (w, h), interpolation=cv2.INTER_LANCZOS4)

@@ -7,11 +7,11 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_pipeline
 from src.core.exceptions import EmoSVGError
-from src.modules.meme_animator.schemas import MemeExpression
+from src.modules.meme_animator.schemas import AnimationBackend, MemeExpression
 from src.pipeline.full_pipeline import FullPipeline, FullPipelineRequest
 
 router = APIRouter(prefix="/animate", tags=["animate"])
@@ -22,6 +22,10 @@ class AnimateResponse(BaseModel):
     frame_count: int
     duration_ms: float
     backend_used: str
+    metrics: dict[str, float] = Field(default_factory=dict)
+    debug_dir: str | None = None
+    cartoon_confidence: float | None = None
+    cartoon_layer_count: int | None = None
 
 
 @router.post("", response_model=AnimateResponse)
@@ -32,8 +36,10 @@ async def animate(
     fps: int = Form(24),
     width: int = Form(512),
     height: int = Form(512),
+    backend: AnimationBackend = Form(AnimationBackend.LIVE_PORTRAIT),
     use_toon_crafter: bool = Form(False),
     frames_between: int = Form(4),
+    debug: bool = Form(False),
     pipeline: FullPipeline = Depends(get_pipeline),
 ) -> AnimateResponse:
     """Generate a Squash-and-Stretch meme animation only (skip 3D and SVG)."""
@@ -59,10 +65,12 @@ async def animate(
             output_format=output_format,
             fps=fps,
             resolution=(width, height),
+            animation_backend=backend,
             run_3d=False,
             run_svg=False,
             use_toon_crafter=use_toon_crafter,
             frames_between=frames_between,
+            debug=debug,
         )
         result = pipeline.execute(req)
     except EmoSVGError as exc:
@@ -78,4 +86,14 @@ async def animate(
         frame_count=anim.frame_count,
         duration_ms=anim.duration_ms,
         backend_used=anim.backend_used,
+        metrics=anim.metrics,
+        debug_dir=str(result.debug_dir) if result.debug_dir else None,
+        cartoon_confidence=(
+            result.cartoon_analysis.geometry.confidence
+            if result.cartoon_analysis else None
+        ),
+        cartoon_layer_count=(
+            len(result.cartoon_layers.layers)
+            if result.cartoon_layers else None
+        ),
     )

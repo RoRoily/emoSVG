@@ -7,11 +7,11 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_pipeline
 from src.core.exceptions import EmoSVGError
-from src.modules.meme_animator.schemas import MemeExpression
+from src.modules.meme_animator.schemas import AnimationBackend, MemeExpression
 from src.pipeline.full_pipeline import FullPipeline, FullPipelineRequest
 
 router = APIRouter(prefix="/batch", tags=["batch"])
@@ -24,10 +24,14 @@ class BatchItemResult(BaseModel):
     animation_path: str | None = None
     frame_count: int | None = None
     duration_ms: float | None = None
-    reconstruction_paths: dict[str, str] = {}
+    reconstruction_paths: dict[str, str] = Field(default_factory=dict)
     svg_path: str | None = None
     elapsed_seconds: float | None = None
-    backends: dict[str, str] = {}
+    backends: dict[str, str] = Field(default_factory=dict)
+    metrics: dict[str, float] = Field(default_factory=dict)
+    debug_dir: str | None = None
+    cartoon_confidence: float | None = None
+    cartoon_layer_count: int | None = None
     error: str | None = None
 
 
@@ -46,10 +50,12 @@ async def batch_generate(
     fps: int = Form(24),
     width: int = Form(512),
     height: int = Form(512),
+    backend: AnimationBackend = Form(AnimationBackend.LIVE_PORTRAIT),
     run_3d: bool = Form(False),
     run_svg: bool = Form(False),
     use_toon_crafter: bool = Form(False),
     frames_between: int = Form(4),
+    debug: bool = Form(False),
     pipeline: FullPipeline = Depends(get_pipeline),
 ) -> BatchGenerateResponse:
     """
@@ -96,10 +102,12 @@ async def batch_generate(
                 output_format=output_format,
                 fps=fps,
                 resolution=(width, height),
+                animation_backend=backend,
                 run_3d=run_3d,
                 run_svg=run_svg,
                 use_toon_crafter=use_toon_crafter,
                 frames_between=frames_between,
+                debug=debug,
             )
             result = pipeline.execute(req)
             anim = result.animation
@@ -125,6 +133,16 @@ async def batch_generate(
                     "svg":            result.vectorization.backend_used
                                       if result.vectorization else "skipped",
                 },
+                metrics=anim.metrics,
+                debug_dir=str(result.debug_dir) if result.debug_dir else None,
+                cartoon_confidence=(
+                    result.cartoon_analysis.geometry.confidence
+                    if result.cartoon_analysis else None
+                ),
+                cartoon_layer_count=(
+                    len(result.cartoon_layers.layers)
+                    if result.cartoon_layers else None
+                ),
             ))
 
         except EmoSVGError as exc:

@@ -5,7 +5,7 @@ All model backends run in fallback mode (no weights required).
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import cv2
 import numpy as np
@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 from src.core.model_registry import ModelRegistry
 from src.modules.meme_animator.schemas import MemeExpression
 from src.pipeline.full_pipeline import FullPipeline, FullPipelineRequest
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -133,6 +132,27 @@ class TestFullPipelineIntegration:
         result = pipeline.execute(req)
         assert result.elapsed_seconds > 0
 
+    def test_debug_artifacts_written(self, sample_image_path, tmp_path, mock_clip_bundle):
+        pipeline = FullPipeline(output_root=tmp_path)
+        _inject_clip(pipeline, mock_clip_bundle)
+        req = FullPipelineRequest(
+            source_image_path=sample_image_path,
+            fps=12,
+            resolution=(64, 64),
+            run_3d=False,
+            run_svg=False,
+            debug=True,
+        )
+        result = pipeline.execute(req)
+
+        assert result.debug_dir is not None
+        assert (result.debug_dir / "input.png").exists()
+        assert (result.debug_dir / "landmark_overlay.png").exists()
+        assert (result.debug_dir / "masks_overlay.png").exists()
+        assert (result.debug_dir / "metrics.json").exists()
+        assert result.cartoon_analysis is not None
+        assert result.cartoon_layers is not None
+
     def test_use_source_for_3d_svg_false_default(self, sample_image_path, tmp_path, mock_clip_bundle):
         """Default (False): 3D and SVG use the peak animation keyframe."""
         pipeline = FullPipeline(output_root=tmp_path)
@@ -174,8 +194,8 @@ class TestFullPipelineIntegration:
 @pytest.fixture()
 def api_client(tmp_path, mock_clip_bundle):
     """TestClient with pipeline singleton replaced by a test instance."""
-    from src.api.main import app
     from src.api import dependencies
+    from src.api.main import app
 
     pipeline = FullPipeline(output_root=tmp_path)
     _inject_clip(pipeline, mock_clip_bundle)
@@ -209,6 +229,27 @@ class TestAPIEndpoints:
         body = resp.json()
         assert "output_path" in body
         assert body["frame_count"] > 0
+
+    def test_animate_endpoint_cartoon_backend(self, api_client, sample_image_path):
+        with open(sample_image_path, "rb") as f:
+            resp = api_client.post(
+                "/animate",
+                data={
+                    "expression": "shock",
+                    "fps": "12",
+                    "width": "64",
+                    "height": "64",
+                    "backend": "cartoon_rig",
+                    "debug": "true",
+                },
+                files={"file": ("character.png", f, "image/png")},
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["backend_used"] == "cartoon_rig"
+        assert body["debug_dir"] is not None
+        assert body["cartoon_layer_count"] >= 5
+        assert body["metrics"]["frame_count"] == float(body["frame_count"])
 
     def test_vectorize_endpoint(self, api_client, sample_image_path):
         with open(sample_image_path, "rb") as f:

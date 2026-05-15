@@ -20,11 +20,13 @@ import numpy as np
 
 from src.core import ModelRegistry
 from src.core.exceptions import AnimationError
+from src.modules.cartoon_evaluator import evaluate_animation_frames
+from src.modules.cartoon_rig import CartoonRigAnimator
 
 from .frame_composer import FrameComposer
 from .live_portrait import LivePortraitWrapper
 from .motion_designer import MotionDesigner
-from .schemas import AnimationRequest, AnimationResult, KeyFrame
+from .schemas import AnimationBackend, AnimationRequest, AnimationResult, KeyFrame
 from .toon_crafter import ToonCrafterWrapper
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,7 @@ class MemeAnimator:
             registry=registry,
         )
         self._composer = FrameComposer()
+        self._cartoon_rig = CartoonRigAnimator()
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -100,13 +103,23 @@ class MemeAnimator:
         logger.info("Motion curve: %d frames designed", len(param_sequence))
         toon_crafter_applied = False
         toon_crafter_failed = False
-        toon_crafter_mode = (
-            "driver" if request.use_toon_crafter_as_driver else "interpolator"
-        )
+        selected_backend = self._select_backend(request)
+        toon_crafter_mode = "rig_post"
+        if selected_backend == AnimationBackend.LIVE_PORTRAIT:
+            toon_crafter_mode = (
+                "driver" if request.use_toon_crafter_as_driver else "interpolator"
+            )
 
-        # 3. Render keyframes via LivePortrait (model stays on GPU for the full batch)
+        # 3. Render keyframes via the selected animation backend.
         try:
-            if request.use_toon_crafter and request.use_toon_crafter_as_driver:
+            if selected_backend == AnimationBackend.CARTOON_RIG:
+                rendered_frames = self._cartoon_rig.render_sequence(
+                    source_bgr,
+                    param_sequence,
+                    analysis=request.cartoon_analysis,
+                    layers=request.cartoon_layers,
+                )
+            elif request.use_toon_crafter and request.use_toon_crafter_as_driver:
                 # Driver mode: render only the peak frame via LivePortrait, then
                 # hand (source, peak) to ToonCrafter to generate the full sequence.
                 peak_params = self._get_peak_params(param_sequence)
@@ -140,7 +153,10 @@ class MemeAnimator:
         # the gaps between consecutive keyframes for smoother cartoon motion.
         if (
             request.use_toon_crafter
-            and not request.use_toon_crafter_as_driver
+            and (
+                selected_backend == AnimationBackend.CARTOON_RIG
+                or not request.use_toon_crafter_as_driver
+            )
             and len(rendered_frames) >= 2
         ):
             logger.info(
@@ -157,7 +173,7 @@ class MemeAnimator:
                 logger.info("ToonCrafter smoothing done: %d total frames", len(rendered_frames))
             except Exception as exc:
                 toon_crafter_failed = True
-                logger.warning("ToonCrafter smoothing failed (%s) — using unsmoothed frames.", exc)
+                logger.warning("ToonCrafter smoothing failed (%s) -- using unsmoothed frames.", exc)
 
         # 5. Build KeyFrame metadata (sample every 5th frame to keep result small)
         ms_per_frame = 1000.0 / request.fps
@@ -180,14 +196,18 @@ class MemeAnimator:
             resolution=request.resolution,
             output_format=request.output_format,
         )
+        metrics = evaluate_animation_frames(rendered_frames, source_bgr=source_bgr)
 
         elapsed = time.monotonic() - t0
         logger.info("MemeAnimator.generate done in %.2f s -> %s", elapsed, output_path)
 
         # Build backend_used string reflecting which backends were active
-        lp_backend = (
-            "live_portrait_fallback" if self._live_portrait._use_fallback else "live_portrait"
-        )
+        if selected_backend == AnimationBackend.CARTOON_RIG:
+            lp_backend = "cartoon_rig"
+        else:
+            lp_backend = (
+                "live_portrait_fallback" if self._live_portrait._use_fallback else "live_portrait"
+            )
         if request.use_toon_crafter:
             if toon_crafter_applied:
                 tc_backend = (
@@ -210,6 +230,7 @@ class MemeAnimator:
             fps=request.fps,
             keyframes=keyframes,
             backend_used=backend,
+            metrics=metrics,
         )
 
     # ── Factory ───────────────────────────────────────────────────────────
@@ -256,3 +277,13 @@ class MemeAnimator:
         most reliable proxy for expression intensity across all presets.
         """
         return max(param_sequence, key=lambda p: p.jaw_drop_scale)
+
+    @staticmethod
+    def _select_backend(request: AnimationRequest) -> AnimationBackend:
+        if request.animation_backend != AnimationBackend.AUTO:
+            return request.animation_backend
+        analysis = request.cartoon_analysis
+        confidence = getattr(getattr(analysis, "geometry", None), "confidence", 0.0)
+        if confidence >= 0.55:
+            return AnimationBackend.CARTOON_RIG
+        return AnimationBackend.LIVE_PORTRAIT

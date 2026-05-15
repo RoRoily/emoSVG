@@ -4,11 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_pipeline
 from src.core.exceptions import EmoSVGError
-from src.modules.meme_animator.schemas import MemeExpression
+from src.modules.meme_animator.schemas import AnimationBackend, MemeExpression
 from src.pipeline.full_pipeline import FullPipeline, FullPipelineRequest
 
 router = APIRouter(prefix="/generate", tags=["generate"])
@@ -22,6 +22,10 @@ class GenerateResponse(BaseModel):
     svg_path: str | None
     elapsed_seconds: float
     backends: dict[str, str]
+    metrics: dict[str, float] = Field(default_factory=dict)
+    debug_dir: str | None = None
+    cartoon_confidence: float | None = None
+    cartoon_layer_count: int | None = None
 
 
 @router.post("", response_model=GenerateResponse)
@@ -32,11 +36,13 @@ async def generate(
     fps: int = Form(24),
     width: int = Form(512),
     height: int = Form(512),
+    backend: AnimationBackend = Form(AnimationBackend.LIVE_PORTRAIT),
     run_3d: bool = Form(True),
     run_svg: bool = Form(True),
     use_source_for_3d_svg: bool = Form(False),
     use_toon_crafter: bool = Form(False),
     frames_between: int = Form(4),
+    debug: bool = Form(False),
     pipeline: FullPipeline = Depends(get_pipeline),
 ) -> GenerateResponse:
     """
@@ -75,11 +81,13 @@ async def generate(
             output_format=output_format,
             fps=fps,
             resolution=(width, height),
+            animation_backend=backend,
             run_3d=run_3d,
             run_svg=run_svg,
             use_source_for_3d_svg=use_source_for_3d_svg,
             use_toon_crafter=use_toon_crafter,
             frames_between=frames_between,
+            debug=debug,
         )
         result = pipeline.execute(req)
     except EmoSVGError as exc:
@@ -106,4 +114,14 @@ async def generate(
             "reconstruction": result.reconstruction.backend_used if result.reconstruction else "skipped",
             "svg": result.vectorization.backend_used if result.vectorization else "skipped",
         },
+        metrics=result.animation.metrics,
+        debug_dir=str(result.debug_dir) if result.debug_dir else None,
+        cartoon_confidence=(
+            result.cartoon_analysis.geometry.confidence
+            if result.cartoon_analysis else None
+        ),
+        cartoon_layer_count=(
+            len(result.cartoon_layers.layers)
+            if result.cartoon_layers else None
+        ),
     )

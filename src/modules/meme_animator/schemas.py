@@ -17,6 +17,12 @@ class MemeExpression(str, Enum):
     CUSTOM    = "custom"
 
 
+class AnimationBackend(str, Enum):
+    LIVE_PORTRAIT = "live_portrait"
+    CARTOON_RIG = "cartoon_rig"
+    AUTO = "auto"
+
+
 class SquashParams(BaseModel):
     eye_bulge_scale: float     = Field(1.0, ge=0.1, le=5.0)
     eye_squint_scale: float    = Field(1.0, ge=0.1, le=2.0)
@@ -39,6 +45,7 @@ class AnimationRequest(BaseModel):
     fps: int = Field(24, ge=8, le=60)
     resolution: tuple[int, int] = (512, 512)
     seed: int | None = None
+    animation_backend: AnimationBackend = AnimationBackend.LIVE_PORTRAIT
     # ToonCrafter inter-frame smoothing (applied after LivePortrait rendering)
     use_toon_crafter: bool = False
     frames_between: int = Field(4, ge=1, le=16)
@@ -53,6 +60,9 @@ class AnimationRequest(BaseModel):
     # When provided, LivePortrait uses it to condition appearance features
     # so the character identity is preserved across deformation frames.
     ip_image_embeds: object | None = None  # np.ndarray (1, D) or None
+    # Optional Q-style geometry/layers produced by the cartoon diagnostics path.
+    cartoon_analysis: object | None = None
+    cartoon_layers: object | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -87,4 +97,5 @@ class AnimationResult(BaseModel):
     fps: int
     keyframes: list[KeyFrame]
     backend_used: str
+    metrics: dict[str, float] = Field(default_factory=dict)
     model_config = {"arbitrary_types_allowed": True}
