@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from src.modules.cartoon_analyzer import CartoonFaceAnalyzer
+from src.modules.cartoon_analyzer import AnimeFaceDetectorAdapter, CartoonFaceAnalyzer
 from src.modules.cartoon_evaluator import evaluate_animation_frames
 from src.modules.cartoon_layer_parser import CartoonLayerParser
 from src.modules.cartoon_rig import CartoonRigAnimator, CartoonRigBuilder
@@ -29,12 +31,57 @@ def _make_chibi_face(path: Path) -> Path:
 
 def test_cartoon_face_analyzer_detects_eye_order(tmp_path: Path):
     image_path = _make_chibi_face(tmp_path / "chibi.png")
-    result = CartoonFaceAnalyzer().analyze(image_path)
+    result = CartoonFaceAnalyzer(backend="heuristic").analyze(image_path)
     geom = result.geometry
 
     assert geom.left_eye_center.x < geom.right_eye_center.x
     assert geom.mouth_center.y > geom.left_eye_center.y
     assert geom.confidence > 0.3
+
+
+def test_anime_face_detector_adapter_maps_landmarks(monkeypatch):
+    keypoints = np.zeros((28, 3), dtype=np.float32)
+    keypoints[:, 0] = 80
+    keypoints[:, 1] = 80
+    keypoints[:, 2] = 0.9
+    keypoints[11:17, :2] = np.array(
+        [[45, 62], [52, 58], [62, 61], [64, 72], [54, 78], [45, 72]],
+        dtype=np.float32,
+    )
+    keypoints[17:23, :2] = np.array(
+        [[96, 62], [104, 58], [114, 61], [116, 72], [106, 78], [96, 72]],
+        dtype=np.float32,
+    )
+    keypoints[23:28, :2] = np.array(
+        [[73, 108], [80, 104], [88, 108], [86, 116], [76, 116]],
+        dtype=np.float32,
+    )
+
+    def fake_create_detector(detector_name, device):
+        def detector(_image):
+            return [{"bbox": np.array([20, 15, 140, 145, 0.95]), "keypoints": keypoints}]
+
+        return detector
+
+    monkeypatch.setitem(
+        sys.modules,
+        "anime_face_detector",
+        types.SimpleNamespace(create_detector=fake_create_detector),
+    )
+
+    image = np.full((160, 160, 3), 255, dtype=np.uint8)
+    mask = np.full((160, 160), 255, dtype=np.uint8)
+    result = AnimeFaceDetectorAdapter(device="cpu").analyze_bgr(
+        image,
+        foreground_mask=mask,
+        foreground_bbox=CartoonFaceAnalyzer._mask_bbox(mask),
+    )
+    geom = result.geometry
+
+    assert result.backend_used == "anime_face_detector"
+    assert geom.left_eye_center.x < geom.right_eye_center.x
+    assert geom.mouth_center.y > geom.left_eye_center.y
+    assert geom.confidence > 0.8
 
 
 def test_cartoon_layer_parser_outputs_rig_parts(tmp_path: Path):
