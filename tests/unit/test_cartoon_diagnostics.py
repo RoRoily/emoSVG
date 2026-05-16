@@ -7,7 +7,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from src.modules.cartoon_analyzer import AnimeFaceDetectorAdapter, CartoonFaceAnalyzer
+from src.modules.cartoon_analyzer import (
+    AnimeFaceDetectorAdapter,
+    CartoonFaceAnalyzer,
+    ExternalAnimeFaceDetectorAdapter,
+)
 from src.modules.cartoon_evaluator import evaluate_animation_frames
 from src.modules.cartoon_layer_parser import CartoonLayerParser
 from src.modules.cartoon_rig import CartoonRigAnimator, CartoonRigBuilder
@@ -79,6 +83,44 @@ def test_anime_face_detector_adapter_maps_landmarks(monkeypatch):
     geom = result.geometry
 
     assert result.backend_used == "anime_face_detector"
+    assert geom.left_eye_center.x < geom.right_eye_center.x
+    assert geom.mouth_center.y > geom.left_eye_center.y
+    assert geom.confidence > 0.8
+
+
+def test_external_anime_face_detector_adapter_maps_json(tmp_path: Path):
+    fake_script = tmp_path / "fake_anime_face_detect.py"
+    fake_script.write_text(
+        """
+import json
+
+keypoints = [[80, 80, 0.9] for _ in range(28)]
+for idx, point in zip(range(11, 17), [[45, 62], [52, 58], [62, 61], [64, 72], [54, 78], [45, 72]]):
+    keypoints[idx][:2] = point
+for idx, point in zip(range(17, 23), [[96, 62], [104, 58], [114, 61], [116, 72], [106, 78], [96, 72]]):
+    keypoints[idx][:2] = point
+for idx, point in zip(range(23, 28), [[73, 108], [80, 104], [88, 108], [86, 116], [76, 116]]):
+    keypoints[idx][:2] = point
+print(json.dumps({"faces": [{"bbox": [20, 15, 140, 145, 0.95], "keypoints": keypoints}]}))
+""".strip(),
+        encoding="utf-8",
+    )
+
+    image = np.full((160, 160, 3), 255, dtype=np.uint8)
+    mask = np.full((160, 160), 255, dtype=np.uint8)
+    result = ExternalAnimeFaceDetectorAdapter(
+        python_executable=sys.executable,
+        script_path=fake_script,
+        device="cpu",
+        timeout_seconds=10,
+    ).analyze_bgr(
+        image,
+        foreground_mask=mask,
+        foreground_bbox=CartoonFaceAnalyzer._mask_bbox(mask),
+    )
+    geom = result.geometry
+
+    assert result.backend_used == "external_anime_face_detector"
     assert geom.left_eye_center.x < geom.right_eye_center.x
     assert geom.mouth_center.y > geom.left_eye_center.y
     assert geom.confidence > 0.8

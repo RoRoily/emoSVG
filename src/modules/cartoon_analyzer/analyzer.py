@@ -23,12 +23,15 @@ class CartoonFaceAnalyzer:
 
     Backends:
       - auto: prefer hysts/anime-face-detector, then heuristic fallback.
+      - external_anime_face_detector: call a separate animeFaceDetector Python
+        environment as a subprocess.
       - anime_face_detector: require the trained 28-landmark anime detector
         unless fallback is explicitly enabled.
       - heuristic: use deterministic color/geometry rules only.
     """
 
     BACKEND_AUTO = "auto"
+    BACKEND_EXTERNAL_ANIME_FACE_DETECTOR = "external_anime_face_detector"
     BACKEND_ANIME_FACE_DETECTOR = "anime_face_detector"
     BACKEND_HEURISTIC = "heuristic"
 
@@ -37,6 +40,9 @@ class CartoonFaceAnalyzer:
         backend: str | None = None,
         device: str | None = None,
         detector_name: str | None = None,
+        external_python: str | Path | None = None,
+        external_script: str | Path | None = None,
+        external_timeout_seconds: float | None = None,
         allow_fallback: bool | None = None,
     ) -> None:
         self.backend = (backend or os.getenv("CARTOON_ANALYZER_BACKEND") or self.BACKEND_AUTO).lower()
@@ -46,12 +52,25 @@ class CartoonFaceAnalyzer:
             or os.getenv("CARTOON_ANALYZER_MODEL")
             or "yolov3"
         )
+        self.external_python = external_python or os.getenv("CARTOON_ANALYZER_EXTERNAL_PYTHON")
+        self.external_script = external_script or os.getenv("CARTOON_ANALYZER_EXTERNAL_SCRIPT")
+        self.external_timeout_seconds = (
+            external_timeout_seconds
+            if external_timeout_seconds is not None
+            else (
+                float(os.getenv("CARTOON_ANALYZER_EXTERNAL_TIMEOUT"))
+                if os.getenv("CARTOON_ANALYZER_EXTERNAL_TIMEOUT")
+                else None
+            )
+        )
         if allow_fallback is None:
             allow_fallback = os.getenv("CARTOON_ANALYZER_ALLOW_HEURISTIC_FALLBACK", "1") != "0"
         self.allow_fallback = allow_fallback
         self._heuristic = HeuristicCartoonFaceAnalyzer()
         self._trained_backend = None
         self._trained_backend_error: str | None = None
+        self._external_backend = None
+        self._external_backend_error: str | None = None
 
     def analyze(
         self,
@@ -70,36 +89,93 @@ class CartoonFaceAnalyzer:
 
         if self.backend not in {
             self.BACKEND_AUTO,
+            self.BACKEND_EXTERNAL_ANIME_FACE_DETECTOR,
             self.BACKEND_ANIME_FACE_DETECTOR,
         }:
             raise ValueError(
                 "CARTOON_ANALYZER_BACKEND must be one of: "
-                "auto, anime_face_detector, heuristic"
+                "auto, external_anime_face_detector, anime_face_detector, heuristic"
             )
 
+        errors: list[str] = []
+        backend_order = self._backend_order()
+        foreground_mask = self._foreground_mask(image_bgr)
+        h, w = image_bgr.shape[:2]
+        foreground_bbox = self._mask_bbox(foreground_mask) or BBox(0, 0, w, h)
+        for backend_name in backend_order:
+            try:
+                backend = (
+                    self._get_external_backend()
+                    if backend_name == self.BACKEND_EXTERNAL_ANIME_FACE_DETECTOR
+                    else self._get_trained_backend()
+                )
+                if backend is None:
+                    error_message = (
+                        self._external_backend_error
+                        if backend_name == self.BACKEND_EXTERNAL_ANIME_FACE_DETECTOR
+                        else self._trained_backend_error
+                    )
+                    raise RuntimeError(error_message or "trained backend unavailable")
+                return backend.analyze_bgr(
+                    image_bgr,
+                    foreground_mask=foreground_mask,
+                    foreground_bbox=foreground_bbox,
+                )
+            except Exception as exc:
+                errors.append(f"{backend_name}: {exc}")
+                if self.backend == backend_name and not self.allow_fallback:
+                    raise
+                logger.warning("Cartoon analyzer backend %s failed (%s).", backend_name, exc)
+
+        if self.backend in {
+            self.BACKEND_EXTERNAL_ANIME_FACE_DETECTOR,
+            self.BACKEND_ANIME_FACE_DETECTOR,
+        } and not self.allow_fallback:
+            raise RuntimeError("; ".join(errors) or "trained analyzer unavailable")
+
+        logger.warning(
+            "Trained cartoon analyzer unavailable or failed (%s); using heuristic fallback.",
+            "; ".join(errors),
+        )
+        result = self._heuristic.analyze_bgr(image_bgr)
+        result.backend_used = "trained_anime_detector_unavailable+heuristic_fallback"
+        result.geometry.warnings.append(f"trained analyzer fallback: {'; '.join(errors)}")
+        return result
+
+    def _backend_order(self) -> list[str]:
+        if self.backend == self.BACKEND_EXTERNAL_ANIME_FACE_DETECTOR:
+            return [self.BACKEND_EXTERNAL_ANIME_FACE_DETECTOR]
+        if self.backend == self.BACKEND_ANIME_FACE_DETECTOR:
+            return [self.BACKEND_ANIME_FACE_DETECTOR]
+        order: list[str] = []
+        if self.external_python:
+            order.append(self.BACKEND_EXTERNAL_ANIME_FACE_DETECTOR)
+        order.append(self.BACKEND_ANIME_FACE_DETECTOR)
+        return order
+
+    def _get_external_backend(self):
+        if self._external_backend is not None:
+            return self._external_backend
+        if self._external_backend_error is not None:
+            return None
         try:
-            backend = self._get_trained_backend()
-            if backend is None:
-                raise RuntimeError(self._trained_backend_error or "trained backend unavailable")
-            foreground_mask = self._foreground_mask(image_bgr)
-            h, w = image_bgr.shape[:2]
-            foreground_bbox = self._mask_bbox(foreground_mask) or BBox(0, 0, w, h)
-            return backend.analyze_bgr(
-                image_bgr,
-                foreground_mask=foreground_mask,
-                foreground_bbox=foreground_bbox,
+            from .external_anime_face_detector_adapter import ExternalAnimeFaceDetectorAdapter
+            self._external_backend = ExternalAnimeFaceDetectorAdapter(
+                python_executable=self.external_python,
+                script_path=self.external_script,
+                detector_name=self.detector_name,
+                device=self.device,
+                timeout_seconds=self.external_timeout_seconds,
+            )
+            logger.info(
+                "Using external cartoon analyzer backend: %s via %s",
+                self.detector_name,
+                self.external_python,
             )
         except Exception as exc:
-            if self.backend == self.BACKEND_ANIME_FACE_DETECTOR and not self.allow_fallback:
-                raise
-            logger.warning(
-                "Trained cartoon analyzer unavailable or failed (%s); using heuristic fallback.",
-                exc,
-            )
-            result = self._heuristic.analyze_bgr(image_bgr)
-            result.backend_used = "anime_face_detector_unavailable+heuristic_fallback"
-            result.geometry.warnings.append(f"trained analyzer fallback: {exc}")
-            return result
+            self._external_backend_error = str(exc)
+            logger.info("external anime_face_detector backend is not available: %s", exc)
+        return self._external_backend
 
     def _get_trained_backend(self):
         if self._trained_backend is not None:

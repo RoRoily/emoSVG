@@ -17,14 +17,21 @@ from src.pipeline.debug_artifacts import PipelineDebugWriter  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inspect Q-style cartoon landmarks and layers.")
-    parser.add_argument("image", type=Path, help="Source character image")
+    parser.add_argument("image", type=Path, nargs="?", help="Source character image")
+    parser.add_argument(
+        "--image",
+        dest="image_option",
+        type=Path,
+        default=None,
+        help="Source character image. Kept for compatibility with older notes.",
+    )
     parser.add_argument("--output-root", type=Path, default=Path("outputs"), help="Output root")
     parser.add_argument("--width", type=int, default=512, help="Debug canvas width")
     parser.add_argument("--height", type=int, default=512, help="Debug canvas height")
     parser.add_argument(
         "--backend",
         default=None,
-        choices=("auto", "anime_face_detector", "heuristic"),
+        choices=("auto", "external_anime_face_detector", "anime_face_detector", "heuristic"),
         help="Cartoon analyzer backend. Defaults to CARTOON_ANALYZER_BACKEND or auto.",
     )
     parser.add_argument(
@@ -33,11 +40,34 @@ def parse_args() -> argparse.Namespace:
         help="Device for anime_face_detector, e.g. cuda:0 or cpu.",
     )
     parser.add_argument(
+        "--external-python",
+        type=Path,
+        default=None,
+        help="Python executable from the separate animeFaceDetector environment.",
+    )
+    parser.add_argument(
+        "--external-script",
+        type=Path,
+        default=None,
+        help="External detector script. Defaults to scripts/anime_face_detect.py.",
+    )
+    parser.add_argument(
+        "--external-timeout",
+        type=float,
+        default=None,
+        help="Timeout in seconds for the external detector subprocess.",
+    )
+    parser.add_argument(
         "--strict-trained",
         action="store_true",
-        help="Fail instead of falling back to heuristic when anime_face_detector is unavailable.",
+        help="Fail instead of falling back to heuristic when the trained detector is unavailable.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.image_option is not None:
+        args.image = args.image_option
+    if args.image is None:
+        parser.error("image path is required, either as positional IMAGE or --image IMAGE")
+    return args
 
 
 def main() -> None:
@@ -48,6 +78,9 @@ def main() -> None:
     analyzer = CartoonFaceAnalyzer(
         backend=args.backend,
         device=args.device,
+        external_python=args.external_python,
+        external_script=args.external_script,
+        external_timeout_seconds=args.external_timeout,
         allow_fallback=not args.strict_trained,
     )
     parser = CartoonLayerParser(analyzer=analyzer)
