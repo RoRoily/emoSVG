@@ -47,9 +47,9 @@ class CartoonLayerParser:
         if foreground_mask is None:
             foreground_mask = CartoonFaceAnalyzer._foreground_mask(image_bgr)
 
-        eye_left_mask = self._soft_ellipse_mask((h, w), geometry.left_eye_bbox.pad(3, 3))
-        eye_right_mask = self._soft_ellipse_mask((h, w), geometry.right_eye_bbox.pad(3, 3))
-        mouth_mask = self._soft_ellipse_mask((h, w), geometry.mouth_bbox.pad(3, 2))
+        eye_left_mask = self._eye_feature_mask(image_bgr, geometry.left_eye_bbox.pad(3, 3))
+        eye_right_mask = self._eye_feature_mask(image_bgr, geometry.right_eye_bbox.pad(3, 3))
+        mouth_mask = self._mouth_feature_mask(image_bgr, geometry.mouth_bbox.pad(3, 2))
         face_mask = self._face_mask((h, w), geometry.face_bbox)
         feature_mask = cv2.bitwise_or(cv2.bitwise_or(eye_left_mask, eye_right_mask), mouth_mask)
 
@@ -147,6 +147,88 @@ class CartoonLayerParser:
         axes = (max(2, int(box.w * 0.58)), max(2, int(box.h * 0.62)))
         cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
         blur = max(3, int(min(box.w, box.h) * 0.16) | 1)
+        return cv2.GaussianBlur(mask, (blur, blur), 0)
+
+    @classmethod
+    def _eye_feature_mask(cls, image_bgr: np.ndarray, bbox: BBox) -> np.ndarray:
+        h, w = image_bgr.shape[:2]
+        box = bbox.clamp(w, h)
+        roi = image_bgr[box.y : box.y2, box.x : box.x2]
+        if roi.size == 0:
+            return cls._soft_ellipse_mask((h, w), box)
+
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        hue, sat, val = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+        iris_like = (sat > 34) & (val > 40) & (val < 252) & (((hue >= 65) & (hue <= 175)) | (sat > 65))
+        ink_like = gray < 70
+        mask_roi = ((iris_like | ink_like).astype(np.uint8) * 255)
+        mask_roi = cv2.bitwise_and(mask_roi, cls._local_ellipse_mask(mask_roi.shape, 0.62, 0.58))
+        mask_roi = cls._largest_centered_components(mask_roi, keep=4)
+        if np.count_nonzero(mask_roi) < max(6, int(box.area * 0.015)):
+            return cls._soft_ellipse_mask((h, w), box)
+        mask_roi = cv2.dilate(mask_roi, np.ones((3, 3), np.uint8), iterations=1)
+        return cls._place_soft_mask(mask_roi, box, (h, w), blur_ratio=0.10)
+
+    @classmethod
+    def _mouth_feature_mask(cls, image_bgr: np.ndarray, bbox: BBox) -> np.ndarray:
+        h, w = image_bgr.shape[:2]
+        box = bbox.clamp(w, h)
+        roi = image_bgr[box.y : box.y2, box.x : box.x2]
+        if roi.size == 0:
+            return cls._soft_ellipse_mask((h, w), box)
+
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        hue, sat, val = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+        warm = ((hue < 18) | (hue > 165) | ((hue >= 18) & (hue < 34))) & (sat > 24) & (val > 60)
+        dark_line = (gray < 118) & (sat > 12)
+        mask_roi = ((warm | dark_line).astype(np.uint8) * 255)
+        mask_roi = cv2.bitwise_and(mask_roi, cls._local_ellipse_mask(mask_roi.shape, 0.70, 0.72))
+        mask_roi = cls._largest_centered_components(mask_roi, keep=2)
+        if np.count_nonzero(mask_roi) < max(4, int(box.area * 0.020)):
+            return cls._soft_ellipse_mask((h, w), box)
+        mask_roi = cv2.dilate(mask_roi, np.ones((3, 3), np.uint8), iterations=1)
+        return cls._place_soft_mask(mask_roi, box, (h, w), blur_ratio=0.14)
+
+    @staticmethod
+    def _local_ellipse_mask(shape: tuple[int, int], x_scale: float, y_scale: float) -> np.ndarray:
+        h, w = shape
+        mask = np.zeros((h, w), dtype=np.uint8)
+        center = (w // 2, h // 2)
+        axes = (max(2, int(w * x_scale / 2.0)), max(2, int(h * y_scale / 2.0)))
+        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
+        return mask
+
+    @staticmethod
+    def _largest_centered_components(mask: np.ndarray, keep: int) -> np.ndarray:
+        count, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if count <= 1:
+            return mask
+        h, w = mask.shape[:2]
+        center = np.array([w / 2.0, h / 2.0], dtype=np.float32)
+        components: list[tuple[float, int]] = []
+        for label in range(1, count):
+            area = float(stats[label, cv2.CC_STAT_AREA])
+            if area < 2:
+                continue
+            dist = float(np.linalg.norm(centroids[label] - center))
+            score = area - dist * max(1.0, min(w, h) * 0.18)
+            components.append((score, label))
+        selected = {label for _, label in sorted(components, reverse=True)[:keep]}
+        return np.where(np.isin(labels, list(selected)), 255, 0).astype(np.uint8)
+
+    @staticmethod
+    def _place_soft_mask(
+        mask_roi: np.ndarray,
+        box: BBox,
+        shape: tuple[int, int],
+        blur_ratio: float,
+    ) -> np.ndarray:
+        h, w = shape
+        mask = np.zeros((h, w), dtype=np.uint8)
+        mask[box.y : box.y2, box.x : box.x2] = mask_roi[: box.h, : box.w]
+        blur = max(3, int(min(box.w, box.h) * blur_ratio) | 1)
         return cv2.GaussianBlur(mask, (blur, blur), 0)
 
     @staticmethod
